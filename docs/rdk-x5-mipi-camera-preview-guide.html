@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDK X5 MIPI 相机预览与排障记录</title>
+<style>
+  :root {
+    --bg: #101316;
+    --surface: #171b1f;
+    --surface-2: #1d2328;
+    --border: #30383f;
+    --text: #edf1f4;
+    --muted: #9ca8b2;
+    --cyan: #59c3d8;
+    --green: #79d69a;
+    --amber: #e8b85c;
+    --red: #ef8177;
+    --blue: #79aef2;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    color: var(--text);
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC",
+      "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  a { color: var(--cyan); }
+  code, pre { font-family: var(--mono); }
+  code {
+    padding: 2px 6px;
+    color: #b8e8c8;
+    background: #20282d;
+    border-radius: 4px;
+  }
+
+  .page {
+    width: min(1080px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 38px 0 72px;
+  }
+
+  header {
+    padding: 26px 0 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h1 {
+    max-width: 860px;
+    margin: 0 0 10px;
+    font-size: clamp(28px, 4vw, 44px);
+    line-height: 1.18;
+    letter-spacing: 0;
+  }
+
+  header p {
+    max-width: 820px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 16px;
+  }
+
+  .status-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 3px 10px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .badge.ok { color: var(--green); border-color: #38634a; }
+  .badge.info { color: var(--cyan); border-color: #315b65; }
+  .badge.warn { color: var(--amber); border-color: #6f5831; }
+
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+
+  nav a:hover { color: var(--text); }
+  section { margin-top: 38px; }
+
+  h2 {
+    margin: 0 0 15px;
+    font-size: 21px;
+    letter-spacing: 0;
+  }
+
+  h3 {
+    margin: 24px 0 9px;
+    color: var(--cyan);
+    font-size: 16px;
+    letter-spacing: 0;
+  }
+
+  p { margin: 9px 0; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+
+  .lead {
+    max-width: 900px;
+    color: #d4dce2;
+    font-size: 16px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .card {
+    min-width: 0;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .card .label { color: var(--muted); font-size: 12px; }
+  .card .value {
+    margin-top: 5px;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 650;
+  }
+  .card .detail { margin-top: 3px; color: var(--muted); font-size: 13px; }
+
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    margin-top: 14px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .flow-step { min-height: 112px; padding: 14px; background: var(--surface); }
+  .flow-step .number { color: var(--cyan); font-family: var(--mono); font-size: 12px; }
+  .flow-step strong { display: block; margin: 4px 0; font-size: 14px; }
+  .flow-step span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+  .callout {
+    margin: 16px 0;
+    padding: 13px 15px;
+    background: var(--surface-2);
+    border-left: 3px solid var(--cyan);
+    border-radius: 0 6px 6px 0;
+  }
+
+  .callout.good { border-left-color: var(--green); }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout strong { color: var(--text); }
+
+  .command {
+    margin: 10px 0;
+    padding: 15px 17px;
+    overflow-x: auto;
+    color: #cfe8d7;
+    background: #0c0f11;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    white-space: pre;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 14px;
+  }
+
+  th, td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th { color: var(--muted); background: var(--surface-2); font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  .ok { color: var(--green); }
+  .note { color: var(--amber); }
+  .bad { color: var(--red); }
+
+  footer {
+    margin-top: 50px;
+    padding-top: 18px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  @media (max-width: 820px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .flow { grid-template-columns: 1fr; }
+    .flow-step { min-height: 0; }
+  }
+
+  @media (max-width: 560px) {
+    .page { width: min(100% - 22px, 1080px); padding-top: 20px; }
+    h1 { font-size: 28px; }
+    .grid { grid-template-columns: 1fr; }
+    th, td { padding: 8px; }
+  }
+
+  @media print {
+    :root {
+      --bg: #ffffff;
+      --surface: #f6f8fa;
+      --surface-2: #eef1f3;
+      --border: #cbd2d8;
+      --text: #172027;
+      --muted: #56636d;
+    }
+    body { color: var(--text); background: var(--bg); }
+    nav { display: none; }
+    code { color: #176c38; }
+    .command { color: #172027; background: #f6f8fa; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>RDK X5 MIPI 相机预览与排障记录</h1>
+    <p>Yahboom RDK X5 Robot 的 Sony IMX219 从硬件识别、ISP/VSE 初始化到 TogetheROS 浏览器预览的实机修复记录。</p>
+    <div class="status-line">
+      <span class="badge ok">当前状态：预览正常</span>
+      <span class="badge info">/image_raw：约 30 FPS</span>
+      <span class="badge">CSI0 / i2c-6 / 0x10</span>
+      <span class="badge warn">当前不是开机自启</span>
+      <span class="badge">验证日期：2026-07-10</span>
+    </div>
+  </header>
+
+  <nav aria-label="文档目录">
+    <a href="#result">最终结果</a>
+    <a href="#architecture">组件关系</a>
+    <a href="#root-cause">修复原理</a>
+    <a href="#manual">手工启动</a>
+    <a href="#autostart">开机自启</a>
+    <a href="#verify">验证</a>
+    <a href="#troubleshooting">排障</a>
+    <a href="#restore">恢复原厂 APP</a>
+  </nav>
+
+  <section id="result">
+    <h2>最终结果</h2>
+    <p class="lead">相机已经成功输出 1920×1080 NV12 图像，TogetheROS 发布原始图像和 JPEG 话题，浏览器页面可以持续预览。</p>
+    <div class="grid">
+      <div class="card">
+        <div class="label">浏览器入口</div>
+        <div class="value">:8000/TogetheROS/</div>
+        <div class="detail"><a href="http://192.168.3.187:8000/TogetheROS/">http://192.168.3.187:8000/TogetheROS/</a></div>
+      </div>
+      <div class="card">
+        <div class="label">相机硬件</div>
+        <div class="value">Sony IMX219</div>
+        <div class="detail">CSI0，I2C bus 6，地址 0x10，2-lane</div>
+      </div>
+      <div class="card">
+        <div class="label">实测帧率</div>
+        <div class="value">约 30 FPS</div>
+        <div class="detail">/image_raw 与 /image_jpeg 均持续发布</div>
+      </div>
+    </div>
+
+    <div class="callout good">
+      <strong>硬件已经确认正常：</strong>官方 <code>libsrcampy</code> 成功取得一帧 3,110,400 字节数据，正好等于 1920×1080 NV12，并成功转成 JPEG。实拍画面较暗但存在纹理和明暗变化，不是空帧。
+    </div>
+  </section>
+
+  <section id="architecture">
+    <h2>组件关系</h2>
+    <p>这台板子的相机不是普通的 <code>/dev/video0</code> V4L2 摄像头，而是 Horizon VIN、ISP、VSE 与 ROS2 组成的专用通路。</p>
+    <div class="flow" aria-label="MIPI camera pipeline">
+      <div class="flow-step"><span class="number">01</span><strong>IMX219</strong><span>CSI0 上的 2-lane RAW10 sensor，控制地址位于 i2c-6:0x10。</span></div>
+      <div class="flow-step"><span class="number">02</span><strong>cam-service</strong><span>提供 /dev/isc 后台中间件。它必须保持运行，但本身不提供网页。</span></div>
+      <div class="flow-step"><span class="number">03</span><strong>mipi_cam</strong><span>配置 VIN、ISP、VSE，并向 ROS2 发布 /image_raw。</span></div>
+      <div class="flow-step"><span class="number">04</span><strong>hobot_codec</strong><span>将 NV12 转为 JPEG，发布 /image_jpeg。</span></div>
+      <div class="flow-step"><span class="number">05</span><strong>websocket + nginx</strong><span>在 8000 端口提供 TogetheROS Web 预览。</span></div>
+    </div>
+
+    <div class="callout warn">
+      <strong>两个程序不能同时占用 CSI0：</strong>亚博桌面自启的 <code>app_SunriseRobot.py</code> 也会通过 <code>libsrcampy</code> 打开相机。运行 TogetheROS 预览前，需要先结束该程序。
+    </div>
+  </section>
+
+  <section id="root-cause">
+    <h2>怎么修复的</h2>
+    <ol>
+      <li>重新扫描硬件，确认 IMX219 已从错误插口移到正确的 <code>CSI0 / i2c-6</code>，地址为 <code>0x10</code>。</li>
+      <li>发现亚博桌面应用 <code>app_SunriseRobot.py</code> 会自动打开 CSI0，与 tros 的 <code>mipi_cam</code> 互斥。</li>
+      <li>修正原脚本中的错误假设：<code>cam-service</code> 不是相机占用者，而是 ISP/VSE 必需的后台服务，不能停止。</li>
+      <li>在 <code>cam-service active</code>、亚博 APP 已停止的状态下，用官方 API 成功抓取真实帧。</li>
+      <li>保留 <code>cam-service</code>，重新启动 <code>mipi_cam_websocket.launch.py</code>，最终得到约 30 FPS 和可访问的 Web 页面。</li>
+    </ol>
+
+    <table>
+      <thead><tr><th>旧操作</th><th>问题</th><th>修正后</th></tr></thead>
+      <tbody>
+        <tr><td><code>systemctl stop cam-service</code></td><td class="bad">ISP/VSE 配置失败，常见 <code>ret(-10)</code></td><td><code>systemctl start cam-service</code> 并保持 active</td></tr>
+        <tr><td>保留亚博 APP</td><td class="bad">CSI0 被占用，mipi_cam 无法独占采集</td><td>启动 tros 前结束 <code>app_SunriseRobot.py</code></td></tr>
+        <tr><td>只检查 8000 端口</td><td class="note">网页能打开不代表有图像</td><td>同时检查 <code>/image_raw</code> 与 <code>/image_jpeg</code> 帧率</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="manual">
+    <h2>手工启动</h2>
+    <p>项目提供统一模式切换脚本，并同步到板子的 <code>/home/sunrise/work/scripts/</code>。</p>
+    <pre class="command">ssh root@192.168.3.187
+
+# 切到 TogetheROS 浏览器预览
+sudo /home/sunrise/work/scripts/camera_mode.sh tros
+
+# 切回亚博手机 APP（IP、控制端口、视频端口）
+sudo /home/sunrise/work/scripts/camera_mode.sh yahboom
+
+# TogetheROS 负责视频，亚博 APP 只负责遥控
+sudo /home/sunrise/work/scripts/camera_mode.sh hybrid
+
+# 查看当前模式和监听端口
+sudo /home/sunrise/work/scripts/camera_mode.sh status</pre>
+    <p>便捷入口：<code>camera_preview.sh</code> 等价于 <code>camera_mode.sh tros</code>；<code>camera_yahboom.sh</code> 等价于 <code>camera_mode.sh yahboom</code>。</p>
+    <p>脚本执行以下操作：</p>
+    <ol>
+      <li>在 i2c-6 和 i2c-4 检查 sensor。</li>
+      <li>确保 <code>cam-service</code> 运行。</li>
+      <li>停止另一个模式的进程，等待 CSI0、ISP 和 VSE 设备节点释放；切回亚博时重启 <code>cam-service</code>，清除 tros 留在中间件中的 CSI 会话。</li>
+      <li>后台启动 TogetheROS 相机 Web launch。</li>
+      <li>通过 <code>ros2 topic hz /image_raw</code> 验证是否真实出图。</li>
+    </ol>
+    <div class="callout">
+      <strong>当前预览地址：</strong><a href="http://192.168.3.187:8000/TogetheROS/">http://192.168.3.187:8000/TogetheROS/</a>
+    </div>
+
+    <h3>推荐：混合模式</h3>
+    <p><code>camera_mode.sh hybrid</code> 不修改亚博原厂代码，而是通过 <code>yahboom_control_only.py</code> 启动原控制程序并替换其 MIPI Camera 类。最终分工如下：</p>
+    <table>
+      <thead><tr><th>功能</th><th>程序与入口</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>手机遥控</td><td>亚博 APP，TCP <code>6000</code></td><td>底盘、串口和遥控协议保持不变</td></tr>
+        <tr><td>RDK 视频</td><td>TogetheROS，<code>:8000/TogetheROS/</code></td><td>CSI0、ROS 图像话题和 Web 预览</td></tr>
+        <tr><td>亚博 Video Port</td><td><code>6500</code></td><td>为兼容 APP 仍监听，但混合模式故意不向它提供 CSI 视频</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn"><strong>协议不能混填：</strong>亚博 Video Port 使用 <code>/video_feed</code> MJPEG，TogetheROS 8000 使用自己的 WebSocket 页面，所以手机 APP 的 Video Port 不能直接填写 8000。</div>
+  </section>
+
+  <section id="autostart">
+    <h2>开机能否自启</h2>
+    <div class="callout warn">
+      <strong>当前配置：不能自动恢复 TogetheROS 预览。</strong>当前 <code>cam-service</code> 已设置 enabled，但 ROS launch 是手工后台启动。重启后，亚博 XFCE autostart 会再次启动 <code>app_SunriseRobot.py</code> 并占用 CSI0，8000 端口预览不会自动出现。
+    </div>
+
+    <h3>方案 A：保留当前行为</h3>
+    <p>适合仍需使用亚博手机 APP 控车的场景。每次重启后按需运行 <code>camera_mode.sh tros</code>，需要手机 APP 时再运行 <code>camera_mode.sh yahboom</code>，无需重启。</p>
+
+    <h3>方案 B：让 TogetheROS 预览开机自启</h3>
+    <p>该方案会禁用亚博桌面 APP 的自启，因为两者不能同时独占 CSI0。先禁用亚博 APP：</p>
+    <pre class="command">sed -i 's/^Hidden=.*/Hidden=true/' \
+  '/home/sunrise/.config/autostart/Start APP Program.desktop'</pre>
+
+    <p>创建 <code>/etc/systemd/system/mipi-camera-preview.service</code>：</p>
+    <pre class="command">[Unit]
+Description=RDK X5 MIPI camera TogetheROS preview
+Requires=cam-service.service
+After=cam-service.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=/root
+ExecStartPre=-/usr/bin/pkill -TERM -f [a]pp_SunriseRobot.py
+ExecStart=/bin/bash -lc 'source /opt/tros/humble/setup.bash &amp;&amp; exec ros2 launch mipi_cam mipi_cam_websocket.launch.py'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target</pre>
+
+    <p>加载并启用：</p>
+    <pre class="command">systemctl daemon-reload
+systemctl enable --now cam-service
+systemctl enable --now mipi-camera-preview.service
+systemctl --no-pager status mipi-camera-preview.service</pre>
+
+    <div class="callout danger">
+      <strong>切换代价：</strong>启用方案 B 后，亚博手机 APP 的相机/遥控后台不会随桌面启动。要恢复原厂 APP，请按“恢复原厂 APP”一节操作。
+    </div>
+  </section>
+
+  <section id="verify">
+    <h2>验证方法</h2>
+    <h3>服务、进程和端口</h3>
+    <pre class="command">systemctl is-active cam-service
+pgrep -af 'ros2 launch mipi_cam'
+ss -ltnp | grep ':8000'</pre>
+
+    <h3>验证真实帧率</h3>
+    <pre class="command">source /opt/tros/humble/setup.bash
+timeout 5 ros2 topic hz /image_raw
+timeout 5 ros2 topic hz /image_jpeg</pre>
+    <p>本次实测两个话题都约为 30 FPS。只有端口而没有话题帧率，说明 Web 服务启动了但相机链路没有出图。</p>
+
+    <h3>浏览器与日志</h3>
+    <pre class="command">curl -I http://127.0.0.1:8000/TogetheROS/
+tail -100 /tmp/mipi_preview.log</pre>
+  </section>
+
+  <section id="troubleshooting">
+    <h2>常见问题</h2>
+    <table>
+      <thead><tr><th>现象或日志</th><th>含义</th><th>处理</th></tr></thead>
+      <tbody>
+        <tr><td><code>No camera sensor found</code></td><td>指定 CSI 上未找到 sensor</td><td>断电检查排线；确认 i2c-6 或 i2c-4 能扫到 0x10。严禁带电插拔。</td></tr>
+        <tr><td><code>hbn_vnode_set_attr ... ret(-10)</code></td><td>ISP/VSE 后台不可用</td><td>执行 <code>systemctl start cam-service</code>，不要停止该服务。</td></tr>
+        <tr><td><code>Mipi csi0 has been used</code></td><td>CSI0 已被其他程序占用</td><td>查找并停止 <code>app_SunriseRobot.py</code> 或旧 mipi_cam。</td></tr>
+        <tr><td>亚博遥控正常但没有视频</td><td>6000/6500 已启动，但 APP 初始化时 CSI0 仍被标记为 used</td><td>使用新版 <code>camera_mode.sh yahboom</code>；脚本会在释放设备后重启 <code>cam-service</code> 再启动 APP。</td></tr>
+        <tr><td><code>VSE channel ... ret=-43</code>、<code>grab failed</code></td><td>采集通路启动但取不到帧</td><td>检查占用与残留进程；若刚切换过采集程序，重启后按正确顺序启动。</td></tr>
+        <tr><td>8000 页面能开但没有画面</td><td>nginx/websocket 正常，相机 publisher 失败</td><td>检查话题帧率和 <code>/tmp/mipi_preview.log</code>，不能只看端口。</td></tr>
+        <tr><td>画面非常暗</td><td>当前实拍确有图像，但亮度均值较低</td><td>增加环境光，检查镜头遮挡、保护膜和曝光；这与“无帧”是不同问题。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="restore">
+    <h2>恢复原厂亚博 APP</h2>
+    <p>如果仅使用手工预览，直接重启即可，因为当前亚博 autostart 已恢复为 <code>Hidden=false</code>。</p>
+    <p>如果配置过 systemd 自启方案，执行：</p>
+    <pre class="command">systemctl disable --now mipi-camera-preview.service
+sed -i 's/^Hidden=.*/Hidden=false/' \
+  '/home/sunrise/.config/autostart/Start APP Program.desktop'
+systemctl enable cam-service
+reboot</pre>
+    <p>重启后由亚博桌面程序重新占用 CSI0，TogetheROS 预览随之停止。</p>
+  </section>
+
+  <footer>
+    RDK X5 MIPI camera preview report · Generated from live SSH diagnostics and verified with real 1920×1080 frames · 2026-07-10
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,1 @@
+- [RDK X5 小车状态](rdk-x5-robot-status.md) — 接入(IP 192.168.3.187/VNC，凭据不入库)、已部署脚本、WiFi 5G 坑、IMX219 预览已验证约 30 FPS

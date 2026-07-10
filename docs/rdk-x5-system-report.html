@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RDK X5 Robot 系统体检报告 · System Report</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161b22; --panel2:#1c2430; --border:#2a3441;
+    --fg:#e6edf3; --muted:#8b98a5; --accent:#4cc2ff; --accent2:#7ee787;
+    --warn:#f0b429; --danger:#ff7b72; --purple:#d2a8ff;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
+    line-height:1.65;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  header.hero{background:linear-gradient(135deg,#12212e 0%,#1a2a3a 60%,#20142e 100%);
+    border:1px solid var(--border);border-radius:16px;padding:32px 34px;margin-bottom:28px;position:relative;overflow:hidden}
+  header.hero h1{margin:0 0 6px;font-size:28px;letter-spacing:.3px}
+  header.hero .sub{color:var(--muted);font-size:14px}
+  .tag{display:inline-block;background:rgba(76,194,255,.14);color:var(--accent);
+    border:1px solid rgba(76,194,255,.35);border-radius:20px;padding:2px 12px;font-size:12px;margin:2px 4px 2px 0}
+  .tag.green{background:rgba(126,231,135,.12);color:var(--accent2);border-color:rgba(126,231,135,.35)}
+  .tag.purple{background:rgba(210,168,255,.12);color:var(--purple);border-color:rgba(210,168,255,.35)}
+  h2{font-size:20px;margin:38px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px}
+  h2 .en{color:var(--muted);font-size:14px;font-weight:400}
+  h3{font-size:16px;margin:22px 0 10px;color:var(--accent)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .card .v{font-size:22px;font-weight:600;margin-top:4px}
+  .card .v small{font-size:13px;color:var(--muted);font-weight:400}
+  table{width:100%;border-collapse:collapse;margin:8px 0 4px;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  code,.mono{font-family:var(--mono);font-size:13px;background:var(--panel2);padding:1px 6px;border-radius:5px;color:var(--accent2)}
+  .callout{background:var(--panel2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:12px 16px;margin:14px 0;font-size:14px}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout .en{color:var(--muted);font-size:13px}
+  ul.tight{margin:8px 0;padding-left:22px}
+  ul.tight li{margin:3px 0}
+  .svgbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .pill{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-family:var(--mono)}
+  .pill.on{background:rgba(126,231,135,.15);color:var(--accent2)}
+  .pill.off{background:rgba(139,152,165,.15);color:var(--muted)}
+  footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--border);color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:720px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>🤖 RDK X5 Robot 系统体检报告</h1>
+  <div class="sub">Yahboom RDK X5 ROBOT · System &amp; Hardware Inventory Report</div>
+  <div style="margin-top:14px">
+    <span class="tag green">在线 · Online 192.168.8.88</span>
+    <span class="tag">D-Robotics RDK X5 V1.0</span>
+    <span class="tag purple">Ubuntu 22.04 · ROS2 Humble</span>
+    <span class="tag">采集方式：SSH 实地扫描</span>
+  </div>
+</header>
+
+<div class="callout">
+  <strong>TL;DR</strong> — 这是一台地平线 <strong>RDK X5</strong>（8 核 Cortex-A55 + BPU AI 加速）驱动的
+  Yahboom 智能小车。系统为 <strong>Ubuntu 22.04.5 / 内核 6.1.83</strong>，预装
+  <strong>ROS2 Humble + TogetheROS(tros) 2.3.0</strong>，外设包含 <strong>MIPI 相机</strong>、
+  <strong>ORADAR 激光雷达</strong> 与串口底盘 MCU。整机温度 ~49 ℃，运行健康。
+  <div class="en">A Horizon RDK X5 powered Yahboom rover: Ubuntu 22.04 / kernel 6.1.83, ROS2 Humble + tros 2.3.0, MIPI camera, ORADAR LiDAR, serial chassis MCU. Healthy, ~49 °C.</div>
+</div>
+
+<!-- ============ 关键指标 ============ -->
+<h2>① 关键指标 <span class="en">Key Metrics</span></h2>
+<div class="grid">
+  <div class="card"><div class="k">主控 SoC</div><div class="v">RDK X5 <small>V1.0 · id 302</small></div></div>
+  <div class="card"><div class="k">CPU</div><div class="v">8 × A55 <small>@1.5 GHz</small></div></div>
+  <div class="card"><div class="k">内存 RAM</div><div class="v">6.5 <small>GiB LPDDR4</small></div></div>
+  <div class="card"><div class="k">存储</div><div class="v">64 <small>GB SD · 用 82%</small></div></div>
+  <div class="card"><div class="k">BPU / GPU</div><div class="v">1.0 <small>GHz · GC8000</small></div></div>
+  <div class="card"><div class="k">温度</div><div class="v">~49 <small>°C (CPU/BPU/DDR)</small></div></div>
+</div>
+
+<!-- ============ 架构图 ============ -->
+<h2>② 硬件拓扑 <span class="en">Hardware Topology</span></h2>
+<div class="svgbox">
+<svg viewBox="0 0 980 470" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,sans-serif">
+  <defs>
+    <style>
+      .box{rx:10;ry:10;stroke-width:1.5}
+      .lbl{fill:#e6edf3;font-size:14px;font-weight:600}
+      .sub{fill:#8b98a5;font-size:11px}
+      .wire{stroke:#3a4756;stroke-width:2;fill:none}
+    </style>
+  </defs>
+
+  <!-- SoC core -->
+  <rect x="360" y="180" width="260" height="110" rx="12" fill="#12212e" stroke="#4cc2ff" stroke-width="2"/>
+  <text x="490" y="212" text-anchor="middle" class="lbl" fill="#4cc2ff" font-size="16">RDK X5 SoC</text>
+  <text x="490" y="234" text-anchor="middle" class="sub">8× Cortex-A55 @1.5GHz</text>
+  <text x="490" y="252" text-anchor="middle" class="sub">BPU (Bayes-e) · GC8000 GPU</text>
+  <text x="490" y="270" text-anchor="middle" class="sub">6.5GiB LPDDR4 · aarch64</text>
+
+  <!-- Camera -->
+  <rect x="120" y="40" width="200" height="66" rx="10" fill="#161b22" stroke="#7ee787"/>
+  <text x="220" y="66" text-anchor="middle" class="lbl">📷 MIPI 相机</text>
+  <text x="220" y="86" text-anchor="middle" class="sub">CSI · hobot VIN/ISP</text>
+  <path class="wire" d="M320 78 C 360 90, 380 150, 400 180"/>
+  <text x="352" y="120" class="sub" fill="#7ee787">MIPI CSI</text>
+
+  <!-- LiDAR -->
+  <rect x="120" y="130" width="200" height="66" rx="10" fill="#161b22" stroke="#d2a8ff"/>
+  <text x="220" y="156" text-anchor="middle" class="lbl">🛰️ ORADAR 雷达</text>
+  <text x="220" y="176" text-anchor="middle" class="sub">/dev/oradar · CH340</text>
+  <path class="wire" d="M320 168 C 345 175, 365 190, 360 210"/>
+  <text x="330" y="150" class="sub" fill="#d2a8ff">USB-serial</text>
+
+  <!-- Chassis MCU -->
+  <rect x="120" y="220" width="200" height="66" rx="10" fill="#161b22" stroke="#f0b429"/>
+  <text x="220" y="246" text-anchor="middle" class="lbl">⚙️ 底盘 MCU</text>
+  <text x="220" y="266" text-anchor="middle" class="sub">/dev/myserial · 115200</text>
+  <path class="wire" d="M320 253 L 360 245"/>
+
+  <!-- CAN -->
+  <rect x="120" y="310" width="200" height="66" rx="10" fill="#161b22" stroke="#3a4756"/>
+  <text x="220" y="336" text-anchor="middle" class="lbl">🔌 CAN / 40-pin</text>
+  <text x="220" y="356" text-anchor="middle" class="sub">m_can · I2C×8 · GPIO</text>
+  <path class="wire" d="M320 343 C 360 320, 380 300, 400 285"/>
+
+  <!-- WiFi -->
+  <rect x="660" y="60" width="200" height="66" rx="10" fill="#161b22" stroke="#4cc2ff"/>
+  <text x="760" y="86" text-anchor="middle" class="lbl">📶 WiFi / BT</text>
+  <text x="760" y="106" text-anchor="middle" class="sub">AIC8800 · wlan0</text>
+  <path class="wire" d="M620 210 C 660 160, 680 130, 700 126"/>
+  <text x="640" y="160" class="sub" fill="#4cc2ff">192.168.8.88</text>
+
+  <!-- Storage -->
+  <rect x="660" y="150" width="200" height="66" rx="10" fill="#161b22" stroke="#7ee787"/>
+  <text x="760" y="176" text-anchor="middle" class="lbl">💾 存储</text>
+  <text x="760" y="196" text-anchor="middle" class="sub">64GB SD · mmcblk1</text>
+  <path class="wire" d="M620 225 L 660 195"/>
+
+  <!-- USB hubs / peripherals -->
+  <rect x="660" y="240" width="200" height="66" rx="10" fill="#161b22" stroke="#3a4756"/>
+  <text x="760" y="266" text-anchor="middle" class="lbl">🖧 USB 3.0 Hub</text>
+  <text x="760" y="286" text-anchor="middle" class="sub">手柄 · Logitech · UVC</text>
+  <path class="wire" d="M620 258 L 660 273"/>
+
+  <!-- Software stack -->
+  <rect x="360" y="360" width="260" height="80" rx="10" fill="#1c2430" stroke="#4cc2ff" stroke-dasharray="4 3"/>
+  <text x="490" y="388" text-anchor="middle" class="lbl" fill="#4cc2ff">软件栈 Software</text>
+  <text x="490" y="408" text-anchor="middle" class="sub">Ubuntu 22.04 · kernel 6.1.83</text>
+  <text x="490" y="424" text-anchor="middle" class="sub">ROS2 Humble · tros 2.3.0</text>
+  <path class="wire" d="M490 290 L 490 360"/>
+</svg>
+</div>
+
+<!-- ============ 系统信息 ============ -->
+<h2>③ 系统信息 <span class="en">System</span></h2>
+<div class="two">
+<table>
+  <tr><th>项目</th><th>值</th></tr>
+  <tr><td>发行版</td><td>Ubuntu 22.04.5 LTS (jammy)</td></tr>
+  <tr><td>内核</td><td><code>6.1.83</code> #11 SMP PREEMPT aarch64</td></tr>
+  <tr><td>RDK OS 版本</td><td>3.0.0</td></tr>
+  <tr><td>SD 卡镜像</td><td>NO.57 · v1.0.0 · 20241206</td></tr>
+  <tr><td>主机名</td><td><code>ubuntu</code></td></tr>
+  <tr><td>启动参数</td><td>root=<code>/dev/mmcblk1p2</code> · console ttyS0,115200</td></tr>
+</table>
+<table>
+  <tr><th>版本组件</th><th>版本</th></tr>
+  <tr><td>hobot-boot / dtb</td><td>3.0.2-20241018</td></tr>
+  <tr><td>hobot-multimedia</td><td>3.0.2</td></tr>
+  <tr><td>hobot-dnn（BPU 推理）</td><td>3.0.1</td></tr>
+  <tr><td>tros-humble</td><td>2.3.0-20240918</td></tr>
+  <tr><td>hobot-models-basic</td><td>1.1.3</td></tr>
+  <tr><td>GPU 驱动</td><td>galcore (Vivante GC8000)</td></tr>
+</table>
+</div>
+
+<!-- ============ CPU/BPU ============ -->
+<h2>④ CPU · BPU · 内存 <span class="en">Compute</span></h2>
+<table>
+  <tr><th>资源</th><th>规格</th><th>频率 min / cur / max</th><th>状态</th></tr>
+  <tr><td><strong>CPU</strong></td><td>8 × ARM Cortex-A55 (r2p0)</td><td>300 / 1200 / 1500 MHz</td><td>48.7 ℃</td></tr>
+  <tr><td><strong>BPU</strong></td><td>Bayes-e AI 加速器 (bpu0)</td><td>500 / 1000 / 1000 MHz</td><td>48.6 ℃ · 占用 0%</td></tr>
+  <tr><td><strong>GPU</strong></td><td>Vivante GC8000 (3D)</td><td>200 / 1000 / 1000 MHz</td><td>—</td></tr>
+  <tr><td><strong>DDR</strong></td><td>6.5 GiB LPDDR4 + 6 GiB swap</td><td>266 / 4266 / 4266 MT/s</td><td>50.0 ℃</td></tr>
+  <tr><td><strong>缓存</strong></td><td>L1 256K×2 · L2 512K · L3 1M</td><td>—</td><td>—</td></tr>
+</table>
+<div class="callout"><strong>存储用量</strong>：根分区 <code>/dev/root</code> 27 GB，已用 21 GB（<strong>82%</strong>，剩 4.8 GB）。
+<code>/boot/config</code> 256 MB 独立分区。<span class="en">Root fs 82% full — leave headroom before large installs.</span></div>
+
+<!-- ============ 外设 ============ -->
+<h2>⑤ 外设与传感器 <span class="en">Peripherals &amp; Sensors</span></h2>
+<table>
+  <tr><th>设备</th><th>接口 / 节点</th><th>驱动</th><th>说明</th></tr>
+  <tr><td>📷 MIPI 相机</td><td><code>/dev/mipi_host0-3</code>, vin/isp/vse</td><td>hobot_mipicsi · hobot_isp · hobot_sensor</td><td>CSI 摄像头，经 VIN→ISP→VSE 通路；已初始化 1 路 sensor</td></tr>
+  <tr><td>🛰️ 激光雷达</td><td><code>/dev/oradar</code> (ttyACM, 1a86:55d4)</td><td>ch341 · oradar_lidar (ROS)</td><td>ORADAR（奥比中光）单线雷达，用于 SLAM 建图/导航</td></tr>
+  <tr><td>⚙️ 底盘 MCU</td><td><code>/dev/myserial</code> (ttyUSB0, 1a86:7523)</td><td>ch341 (CH340)</td><td>串口连底盘控制板，115200，SunriseRobot SDK 驱动</td></tr>
+  <tr><td>📶 WiFi / 蓝牙</td><td><code>wlan0</code> · hci</td><td>aic8800_fdrv / aic8800_bsp · btrtl</td><td>AICSemi AIC8800，当前 IP 192.168.8.88/24</td></tr>
+  <tr><td>🔌 CAN 总线</td><td><code>can0</code></td><td>m_can · tcan4x5x</td><td>CAN 控制器（当前 DOWN）</td></tr>
+  <tr><td>🎮 输入设备</td><td>USB</td><td>hid_logitech_dj · joydev</td><td>DragonRise 手柄 + Logitech Unifying 接收器</td></tr>
+  <tr><td>🔊 音频</td><td>I2S</td><td>snd_soc_es8326 / es8311 · hobot_sound</td><td>ES8326/ES8311 codec，双工麦克风+扬声器</td></tr>
+  <tr><td>🖥️ 显示</td><td>HDMI</td><td>sii902x · vs_drm · drm_kms_helper</td><td>SiI902x HDMI 发送器</td></tr>
+  <tr><td>💡 OLED / LED</td><td>I2C / GPIO</td><td>yahboom_oled.service · input_leds</td><td>Yahboom 状态 OLED 屏</td></tr>
+  <tr><td>🧭 总线</td><td>I2C ×8 · SPI · 40-pin</td><td>Synopsys DesignWare I2C</td><td>i2c-0..8（含 mux），GPIO 扩展</td></tr>
+</table>
+
+<!-- ============ 驱动模块 ============ -->
+<h2>⑥ 关键内核驱动 <span class="en">Kernel Modules</span></h2>
+<div class="two">
+<div>
+<h3>地平线多媒体 / AI 通路</h3>
+<ul class="tight">
+  <li><code>bpu_framework</code> · <code>bpu_cores</code> · <code>bpu_hw_io_x5</code> — BPU AI 加速</li>
+  <li><code>hobot_vio_common</code> — VIO 视频输入总线（14 个模块挂载）</li>
+  <li><code>hobot_mipicsi</code> · <code>hobot_mipiphy</code> — MIPI CSI 相机</li>
+  <li><code>hobot_isp</code>(vs_isp) · <code>hobot_vin_vnode</code> · <code>vs_vse</code> — ISP/VIN/VSE</li>
+  <li><code>hobot_vpu</code> · <code>hobot_jpu</code> · <code>hobot_codec_vnode</code> — 视频/JPEG 编解码</li>
+  <li><code>galcore</code> — Vivante GC8000 GPU</li>
+  <li><code>hobot_gdc</code> · <code>hobot_osd</code> — 几何畸变校正 / OSD 叠加</li>
+</ul>
+</div>
+<div>
+<h3>连接 / 外设</h3>
+<ul class="tight">
+  <li><code>aic8800_fdrv</code> / <code>cfg80211</code> — WiFi</li>
+  <li><code>bluetooth</code> · <code>hci_uart</code> · <code>btrtl</code> — 蓝牙</li>
+  <li><code>m_can</code> · <code>tcan4x5x</code> — CAN 总线</li>
+  <li><code>ch341</code> — CH340 USB 串口（雷达 + 底盘）</li>
+  <li><code>snd_soc_es8326</code> / <code>es8311</code> — 音频 codec</li>
+  <li><code>sii902x</code> · <code>vs_drm</code> — HDMI 显示</li>
+  <li><code>uvcvideo</code> — 备用 USB 摄像头</li>
+  <li><code>hid_logitech_dj</code> · <code>joydev</code> — 手柄</li>
+</ul>
+</div>
+</div>
+
+<!-- ============ 服务 ============ -->
+<h2>⑦ 开机自启服务 <span class="en">Enabled Services</span></h2>
+<h3>地平线 / Yahboom 定制</h3>
+<table>
+  <tr><th>服务</th><th>状态</th><th>作用</th></tr>
+  <tr><td><code>cam-service</code></td><td><span class="pill on">active</span></td><td>相机服务（MIPI 采集守护）</td></tr>
+  <tr><td><code>jupyterlab</code></td><td><span class="pill on">active</span></td><td>JupyterLab 教程环境 · 端口 <code>8888</code></td></tr>
+  <tr><td><code>x11vnc</code></td><td><span class="pill on">active</span></td><td>VNC 远程桌面 · 端口 <code>5900</code></td></tr>
+  <tr><td><code>yahboom_oled</code></td><td><span class="pill on">active</span></td><td>Yahboom OLED 状态屏刷新</td></tr>
+  <tr><td><code>hobot-wifi</code></td><td><span class="pill on">active</span></td><td>WiFi/热点配置（RDK_X5_Robot）</td></tr>
+  <tr><td><code>hobot-audio</code></td><td><span class="pill on">enabled</span></td><td>音频子系统初始化</td></tr>
+  <tr><td><code>hobot-usb-gadget</code></td><td><span class="pill on">enabled</span></td><td>USB 网卡 gadget（usb0 192.168.128.10）</td></tr>
+  <tr><td><code>hobot-modules-load</code> / <code>hobot-cpu-config</code></td><td><span class="pill on">enabled</span></td><td>驱动加载 · CPU 调频</td></tr>
+  <tr><td><code>isc-dhcp-server</code></td><td><span class="pill on">enabled</span></td><td>热点端 DHCP 分配</td></tr>
+</table>
+<h3>系统标准服务</h3>
+<div>
+  <span class="tag">ssh</span><span class="tag">NetworkManager</span><span class="tag">bluetooth</span>
+  <span class="tag">ntp</span><span class="tag">watchdog</span><span class="tag">systemd-resolved</span>
+  <span class="tag">rsyslog</span><span class="tag">udisks2</span><span class="tag">sysstat</span>
+  <span class="tag">blueman-mechanism</span><span class="tag">rpcbind</span>
+</div>
+
+<!-- ============ 软件栈 ============ -->
+<h2>⑧ 机器人软件栈 <span class="en">Robot Software Stack</span></h2>
+<div class="two">
+<div>
+<h3>ROS2 Humble + TogetheROS (tros 2.3.0)</h3>
+<p style="color:var(--muted);font-size:14px;margin:6px 0">地平线 tros 提供 BPU 加速的感知节点：</p>
+<ul class="tight">
+  <li><code>mipi-cam</code> · <code>hobot-usb-cam</code> — 相机采集</li>
+  <li><code>dnn-node</code> · <code>hobot-dnn</code> — BPU 推理框架</li>
+  <li><code>mono2d-body-detection</code> · <code>hand-lmk</code> · <code>gesture-control</code> — 人体/手势</li>
+  <li><code>hobot-yolo-world</code> · <code>mono-mobilesam</code> · <code>clip-*</code> — 开放词汇检测/分割</li>
+  <li><code>stereonet</code> · <code>mono3d-indoor</code> · <code>elevation-net</code> — 深度/3D</li>
+  <li><code>hobot-codec</code> · <code>websocket</code> · <code>hobot-cv</code> — 编解码/可视化</li>
+</ul>
+</div>
+<div>
+<h3>Yahboom 小车工作空间</h3>
+<p style="color:var(--muted);font-size:14px;margin:6px 0"><code>/home/sunrise/yahboomcar_ws/src</code>（20+ 包）：</p>
+<ul class="tight">
+  <li><code>yahboomcar_bringup</code> / <code>_base_node</code> / <code>_ctrl</code> — 底盘驱动/控制</li>
+  <li><code>yahboomcar_nav</code> · <code>slam_gmapping</code> · <code>yahboomcar_laser</code> — SLAM 建图 &amp; 导航</li>
+  <li><code>yahboomcar_visual</code> · <code>_colortrack</code> · <code>_linefollower</code> — 视觉巡线/颜色追踪</li>
+  <li><code>yahboomcar_deeplearning</code> · <code>_kcftracker</code> — 深度学习/目标跟踪</li>
+  <li><code>yahboomcar_multi</code> — 多机协同</li>
+</ul>
+<p style="color:var(--muted);font-size:13px;margin-top:10px">
+  雷达驱动：<code>~/software/library_ws</code>（oradar_lidar）<br>
+  底盘 SDK：<code>~/sunriseRobot/SunriseRobotLib</code></p>
+</div>
+</div>
+
+<!-- ============ 网络 ============ -->
+<h2>⑨ 网络配置 <span class="en">Networking</span></h2>
+<table>
+  <tr><th>接口</th><th>状态</th><th>地址</th><th>说明</th></tr>
+  <tr><td><code>wlan0</code></td><td><span class="pill on">UP</span></td><td>192.168.8.88/24</td><td>WiFi（AIC8800）· 主用入口</td></tr>
+  <tr><td><code>usb0</code></td><td><span class="pill off">DOWN</span></td><td>192.168.128.10/24</td><td>USB RNDIS gadget（接 PC 时用）</td></tr>
+  <tr><td><code>eth0</code></td><td><span class="pill off">DOWN</span></td><td>—</td><td>有线网口未接</td></tr>
+  <tr><td><code>can0</code></td><td><span class="pill off">DOWN</span></td><td>—</td><td>CAN 总线</td></tr>
+</table>
+<div class="callout warn"><strong>接入方式 · Access</strong><br>
+SSH：<code>ssh root@192.168.8.88</code>（密码 <code>yahboom</code>）· 板载热点 SSID <code>RDK_X5_Robot</code> / <code>12345678</code><br>
+JupyterLab：<code>http://192.168.8.88:8888</code> · VNC：<code>192.168.8.88:5900</code></div>
+
+<footer>
+  <p>📚 官方资料：<a href="https://www.yahboom.com/study/RDK-X5-ROBOT">yahboom.com/study/RDK-X5-ROBOT</a>（资料获取密码 <code>ntrc</code>）</p>
+  <p>本报告由 SSH 实地采集（<code>lscpu / lsmod / dpkg / systemctl / rdkos_info</code> 等）自动整理生成，仅反映采集时刻的板卡状态。</p>
+  <p style="color:#5a6b7a">Generated from live SSH inventory of RDK X5 @ 192.168.8.88 · Yahboom RDK X5 ROBOT</p>
+</footer>
+
+</div>
+</body>
+</html>
