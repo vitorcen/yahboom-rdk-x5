@@ -62,6 +62,7 @@
   <span id="host" class="pill" title="ICMP ping 探测，独立于 rosbridge——重启/关机时看板子生死" style="display:none">主机 --</span>
   <div id="tabs">
     <button class="tab on" data-page="dash">仪表盘</button>
+    <button class="tab" data-page="sys">系统</button>
     <button class="tab" data-page="logs">日志</button>
   </div>
 </header>
@@ -94,6 +95,231 @@
         </div>
       </div>
       <div id="cambox" title="拖动移动 · 右下角拉伸改大小"><img id="cam" alt="camera"><div id="camgrip"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= system ======================= -->
+<div id="page-sys" class="page">
+  <div id="syswrap">
+    <div id="sysleft">
+      <svg id="sysdiag" viewBox="0 0 660 944" preserveAspectRatio="xMidYMin meet">
+        <defs><marker id="ar" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto">
+          <path fill="#4a5165" d="M0 0L6 3L0 6z"/></marker></defs>
+
+        <!-- hardware bus wires (no arrows) -->
+        <g class="wire">
+          <path d="M110 172 V304"/>
+          <path d="M300 172 V252"/>
+          <path d="M254 278 V304"/>
+          <path d="M393 278 V304"/>
+          <path d="M550 278 V304"/>
+          <path d="M557 172 V188"/>
+          <path d="M498 210 H488"/>
+        </g>
+        <text x="116" y="192" class="port">CSI0 · i2c-6</text>
+        <text x="306" y="246" class="port">USB3</text>
+        <text x="563" y="184" class="port">40pin 排针</text>
+        <text x="260" y="298" class="port">/dev/oradar</text>
+        <text x="399" y="298" class="port">2.4G 接收器</text>
+        <text x="556" y="298" class="port">/dev/myserial</text>
+
+        <!-- main board -->
+        <rect x="28" y="16" width="604" height="156" rx="10" class="board"/>
+        <text x="44" y="38" class="boardlbl hdrclk" data-mod="soc">RDK X5 主板 · D-Robotics X5 V1.0</text>
+
+        <g class="modblk" data-mod="soc">
+          <rect x="46" y="52" width="158" height="72" rx="6"/>
+          <text x="125" y="80" text-anchor="middle">SoC Sunrise X5</text>
+          <text x="125" y="98" text-anchor="middle" class="sub">8×A55 · 10TOPS BPU</text>
+          <circle id="md-soc" cx="194" cy="62" r="4" class="st"/>
+        </g>
+        <g class="modblk" data-mod="mem">
+          <rect x="218" y="52" width="126" height="72" rx="6"/>
+          <text x="281" y="80" text-anchor="middle">内存 / 存储</text>
+          <text x="281" y="98" text-anchor="middle" class="sub">LPDDR4 · TF 卡</text>
+          <circle id="md-mem" cx="334" cy="62" r="4" class="st"/>
+        </g>
+        <g class="modblk" data-mod="wifi">
+          <rect x="358" y="52" width="126" height="72" rx="6"/>
+          <text x="421" y="80" text-anchor="middle">WiFi / 蓝牙</text>
+          <text x="421" y="98" text-anchor="middle" class="sub">aic8800D80</text>
+          <circle id="md-wifi" cx="474" cy="62" r="4" class="st"/>
+        </g>
+        <g class="dim">
+          <rect x="498" y="52" width="118" height="72" rx="6"/>
+          <text x="557" y="80" text-anchor="middle">其他接口</text>
+          <text x="557" y="98" text-anchor="middle">40pin · HDMI · 音频</text>
+        </g>
+
+        <!-- 40pin stack-up between board and HUB: fan board extends the header,
+             OLED ribbon on its corner pins; Yahboom software drives it, no ROS -->
+        <g class="modblk vyb" data-mod="oled">
+          <rect x="360" y="188" width="128" height="44" rx="6"/>
+          <text x="424" y="208" text-anchor="middle">OLED 屏</text>
+          <text x="424" y="224" text-anchor="middle" class="sub">SSD1306 · 亚博 oled.py</text>
+          <circle id="md-oled" cx="478" cy="198" r="4" class="st"/>
+        </g>
+        <g class="dim">
+          <rect x="498" y="188" width="118" height="44" rx="6"/>
+          <text x="557" y="208" text-anchor="middle">风扇扩展板</text>
+          <text x="557" y="224" text-anchor="middle">亚博 · 顺延 40pin</text>
+        </g>
+
+        <!-- USB3 HUB expansion board: lidar / joystick / chassis serial hang off it -->
+        <g class="modblk" data-mod="hub">
+          <rect x="230" y="252" width="402" height="26" rx="6"/>
+          <text x="431" y="270" text-anchor="middle">USB3 HUB 扩展板</text>
+          <circle id="md-hub" cx="620" cy="265" r="4" class="st"/>
+        </g>
+
+        <!-- peripherals; chassis carries its parts inline (IMU clickable) -->
+        <g class="modblk" data-mod="cam">
+          <rect x="46" y="304" width="128" height="56" rx="6"/>
+          <text x="110" y="328" text-anchor="middle">相机 IMX219</text>
+          <text x="110" y="346" text-anchor="middle" class="sub">1080P · 30fps</text>
+          <circle id="md-cam" cx="164" cy="314" r="4" class="st"/>
+        </g>
+        <g class="modblk" data-mod="lidar">
+          <rect x="190" y="304" width="128" height="56" rx="6"/>
+          <text x="254" y="328" text-anchor="middle">雷达 MS200</text>
+          <text x="254" y="346" text-anchor="middle" class="sub">360° · 10Hz</text>
+          <circle id="md-lidar" cx="308" cy="314" r="4" class="st"/>
+        </g>
+        <g class="modblk" data-mod="joy">
+          <rect x="334" y="304" width="118" height="56" rx="6"/>
+          <text x="393" y="328" text-anchor="middle">手柄接收器</text>
+          <text x="393" y="346" text-anchor="middle" class="sub">/dev/input/js0</text>
+          <circle id="md-joy" cx="442" cy="314" r="4" class="st"/>
+        </g>
+        <g class="modblk vyb" data-mod="chassis">
+          <rect x="468" y="304" width="164" height="72" rx="6"/>
+          <text x="550" y="326" text-anchor="middle">底盘扩展板 STM32</text>
+          <circle id="md-chassis" cx="622" cy="314" r="4" class="st"/>
+        </g>
+        <g class="dim">
+          <rect x="476" y="338" width="50" height="24" rx="4"/>
+          <text x="501" y="354" text-anchor="middle">电机×4</text>
+          <rect x="586" y="338" width="38" height="24" rx="4"/>
+          <text x="605" y="354" text-anchor="middle">电池</text>
+        </g>
+        <g class="modblk" data-mod="imu">
+          <rect x="534" y="338" width="44" height="24" rx="4"/>
+          <text x="556" y="354" text-anchor="middle">IMU</text>
+          <circle id="md-imu" cx="571" cy="344" r="3" class="st"/>
+        </g>
+
+        <!-- ===== ROS2 stack, inverted: drivers sit right under their hardware,
+             sensor data flows down, control flows back up ===== -->
+        <rect class="stackframe" x="12" y="412" width="626" height="384" rx="10"/>
+        <text class="framelbl hdrclk" data-node="overview" x="626" y="430" text-anchor="end">ROS2 软件栈</text>
+        <g class="flow">
+          <path d="M110 360 V444"/>
+          <path d="M254 360 V444"/>
+          <path d="M393 360 V444"/>
+          <path d="M550 376 V444"/>
+          <path d="M520 500 V520 H227 V540"/>
+          <path d="M393 500 V540"/>
+          <path d="M254 500 V528 H308 V634"/>
+          <path d="M110 500 V520 H24 V758 H46"/>
+          <path d="M24 718 H529 V734"/>
+          <path d="M172 567 H156"/>
+          <path d="M452 567 H500"/>
+          <path d="M550 540 V500"/>
+          <path d="M101 594 V634"/>
+          <path d="M318 662 H550 V594"/>
+          <path d="M131 734 V690"/>
+          <path d="M236 758 H216"/>
+        </g>
+        <text x="116" y="400" class="port">NV12 图像</text>
+        <text x="260" y="400" class="port">点云帧</text>
+        <text x="399" y="400" class="port">按键/摇杆</text>
+        <text x="556" y="400" class="port">串口协议</text>
+        <text x="300" y="516" class="port">/imu/data_raw</text>
+        <text x="399" y="526" class="port">/joy</text>
+        <text x="314" y="626" class="port">/scan</text>
+        <text x="60" y="516" class="port">/image_jpeg</text>
+        <text x="476" y="610" class="port" text-anchor="middle">/cmd_vel_joy</text>
+        <text x="556" y="524" class="port">/cmd_vel_drv</text>
+        <text x="107" y="622" class="port">/odom</text>
+        <text x="430" y="658" class="port">/cmd_vel</text>
+        <text x="137" y="716" class="port">/goal_pose · /cmd_vel(键盘)</text>
+
+        <!-- L4 drivers -->
+        <g class="n vtros stkblk" data-node="mipicam"><rect x="46" y="444" width="128" height="56" rx="6"/>
+          <text x="110" y="466" text-anchor="middle">mipi_cam·codec</text>
+          <text x="110" y="484" text-anchor="middle" class="sub">采图 + JPEG 编码</text></g>
+        <g class="n vup stkblk" data-node="oradarnode"><rect x="190" y="444" width="128" height="56" rx="6"/>
+          <text x="254" y="466" text-anchor="middle">oradar 驱动</text>
+          <text x="254" y="484" text-anchor="middle" class="sub">MS200 SDK</text></g>
+        <g class="n vup stkblk" data-node="joynode"><rect x="334" y="444" width="118" height="56" rx="6"/>
+          <text x="393" y="466" text-anchor="middle">joy_node</text>
+          <text x="393" y="484" text-anchor="middle" class="sub">读 js0</text></g>
+        <g class="n vyb stkblk" data-node="driver"><rect x="468" y="444" width="164" height="56" rx="6"/>
+          <text x="550" y="466" text-anchor="middle">Mcnamu_driver</text>
+          <text x="550" y="484" text-anchor="middle" class="sub">底盘协议</text></g>
+
+        <!-- L3 fusion / arbitration -->
+        <g class="n vup stkblk" data-node="ekf"><rect x="46" y="540" width="110" height="54" rx="6"/>
+          <text x="101" y="561" text-anchor="middle">ekf_node</text>
+          <text x="101" y="579" text-anchor="middle" class="sub">里程计融合</text></g>
+        <g class="n vup stkblk" data-node="madgwick"><rect x="172" y="540" width="110" height="54" rx="6"/>
+          <text x="227" y="561" text-anchor="middle">madgwick</text>
+          <text x="227" y="579" text-anchor="middle" class="sub">姿态融合</text></g>
+        <g class="n vyb stkblk" data-node="joyctrl"><rect x="334" y="540" width="118" height="54" rx="6"/>
+          <text x="393" y="561" text-anchor="middle">joy_ctrl</text>
+          <text x="393" y="579" text-anchor="middle" class="sub">键位映射</text></g>
+        <g class="n vown stkblk" data-node="mux"><rect x="500" y="540" width="100" height="54" rx="6"/>
+          <text x="550" y="561" text-anchor="middle">cmd_vel_mux</text>
+          <text x="550" y="579" text-anchor="middle" class="sub">速度仲裁</text></g>
+
+        <!-- L2 navigation -->
+        <g class="n vup stkblk" data-node="nav2"><rect x="46" y="634" width="272" height="56" rx="6"/>
+          <text x="182" y="656" text-anchor="middle">Nav2 组合容器</text>
+          <text x="182" y="674" text-anchor="middle" class="sub">amcl · planner · controller · bt_nav</text></g>
+
+        <!-- L1 UI / remote -->
+        <g class="n vup stkblk" data-node="rosbridge"><rect x="46" y="734" width="170" height="48" rx="6"/>
+          <text x="131" y="754" text-anchor="middle">rosbridge</text>
+          <text x="131" y="770" text-anchor="middle" class="sub">websocket :9090</text></g>
+        <g class="n vown stkblk" data-node="gui"><rect x="236" y="734" width="180" height="48" rx="6"/>
+          <text x="326" y="754" text-anchor="middle">本 GUI (Tauri)</text>
+          <text x="326" y="770" text-anchor="middle" class="sub">仪表盘 · 导航 · 遥控</text></g>
+        <g class="n vtros stkblk" data-node="webview"><rect x="426" y="734" width="206" height="48" rx="6"/>
+          <text x="529" y="754" text-anchor="middle">Web 预览 :8000</text>
+          <text x="529" y="770" text-anchor="middle" class="sub">TogetheROS websocket</text></g>
+
+        <!-- Yahboom apps below the stack: nav app is a rosbridge client (live
+             path); phone app talks TCP to app_SunriseRobot.py which writes the
+             serial port directly, bypassing ROS (disabled -> dashed) -->
+        <g class="flow">
+          <path d="M131 816 V782"/>
+          <path class="off" d="M546 816 V804 H650 V340 H632"/>
+        </g>
+        <text x="137" y="800" class="port">ws :9090 订阅地图/位姿 · 发目标 · 存图服务</text>
+        <text class="port" transform="rotate(-90 656 620)" x="656" y="620">TCP :6000 遥控 · :6500 视频 — 绕过 ROS 直连底盘（已禁自启）</text>
+        <g class="n vyb stkblk" data-node="navapp"><rect x="46" y="816" width="170" height="48" rx="6"/>
+          <text x="131" y="836" text-anchor="middle">建图导航 APP</text>
+          <text x="131" y="852" text-anchor="middle" class="sub">亚博 · rosbridge 客户端</text></g>
+        <g class="n vyb stkblk" data-node="phoneapp"><rect x="460" y="816" width="172" height="48" rx="6"/>
+          <text x="546" y="836" text-anchor="middle">手机遥控 APP</text>
+          <text x="546" y="852" text-anchor="middle" class="sub">亚博 · TCP 直连（已禁）</text></g>
+
+        <!-- notes + legend -->
+        <text x="46" y="888" class="note">OLED 排线插在风扇板顺延的 40pin 角落引脚（i2c-5），软件＝亚博 oled.py 直写，不占 ROS 节点；</text>
+        <text x="46" y="904" class="note">USB3 HUB＝透明总线；九轴 IMU 在亚博底盘扩展板上，数据经 Mcnamu_driver 进栈。</text>
+        <g class="lg">
+          <rect x="46"  y="920" width="10" height="10" rx="2" class="vup"/><text x="62" y="929">ROS2 上游/厂商</text>
+          <rect x="166" y="920" width="10" height="10" rx="2" class="vtros"/><text x="182" y="929">D-Robotics tros</text>
+          <rect x="288" y="920" width="10" height="10" rx="2" class="vyb"/><text x="304" y="929">亚博 Yahboom</text>
+          <rect x="398" y="920" width="10" height="10" rx="2" class="vown"/><text x="414" y="929">自研</text>
+        </g>
+      </svg>
+      <div class="syshint">上＝硬件拓扑，下＝ROS2 软件栈（倒置：传感数据向下流入软件，控制指令向上回到底盘）· 硬件模块与栈节点均可点击 · 状态灯每 10s 刷新</div>
+    </div>
+    <div id="sysright">
+      <div id="sysbar"><b id="sysTitle">软件栈总览</b><button id="sysRefresh">↻ 刷新</button></div>
+      <pre id="sysOut">点击左侧框图中的硬件模块或栈节点。</pre>
     </div>
   </div>
 </div>

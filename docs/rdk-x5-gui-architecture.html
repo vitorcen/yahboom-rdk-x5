@@ -27,8 +27,8 @@
 <code>gui/</code> 是一个 Tauri 2 桌面应用：前端零依赖（<code>gui/ui/</code>：
 index.html 纯结构 + style.css + js/ 按职责拆模块——ros.js 连接与话题分发注册表、
 viewer.js 渲染与导航、camera.js 相机窗、teleop.js 键盘遥控、health.js 仪表条、
-logs.js 日志页、main.js 装配；编译时嵌入二进制），后端是一层很薄的 Rust
-（8 个 async command：7 个 ssh 包装 + 1 个 ping 探活）。它与小车之间<b>只有两条通信通道</b>：
+system.js 系统页板卡框图、logs.js 日志页、main.js 装配；编译时嵌入二进制），后端是一层很薄的 Rust
+（10 个 async command：9 个 ssh 包装 + 1 个 ping 探活）。它与小车之间<b>只有两条通信通道</b>：
 <b>rosbridge WebSocket（ws://192.168.3.187:9090）</b>承载所有实时数据与控制指令，
 <b>SSH（192.168.3.187:22，免密公钥）</b>承载日志与服务状态查询。没有第三条。
 <br><span class="dim">Two channels only: rosbridge WebSocket (:9090) for all realtime
@@ -56,6 +56,7 @@ data & control; SSH (:22) for logs & service status.</span>
 <tr><td>仪表条：SoC 温度 🌡 + CPU/RAM/HD 负载条</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td><code>cat hwmon0/temp1_input /proc/loadavg; nproc; free -m; df -BM /</code>（每 5 s；板上<b>无电流计</b>，功耗瓦数不可测，以温度/CPU 反映负载）</td><td>拉取 ←</td></tr>
 <tr><td>⟳ 重启 / ⏻ 关机按钮（两击确认，3 s 自动解除）</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td><code>systemctl reboot / poweroff</code>（action 白名单；实测重启：systemd 停 Nav2 栈约 1 min 后掉线，~20 s 回来，GUI 全自动恢复）</td><td>调用 →</td></tr>
 <tr><td>🎮 遥控检查按钮（自检面板 + 一键修复）</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td>自检=pgrep 逐查 js0 设备 + joy_node/joy_ctrl/驱动/mux 进程 + 亚博 APP 串口冲突 + 服务状态（pgrep 不吃 DDS 发现竞态，比 <code>ros2 topic info</code> 可靠）；修复=<code>systemctl restart nav-bringup</code>，8 s/20 s 两段自动复检（节点拉起要 10-20 s）。面板附 SELECT 使能锁与欠压假故障提示</td><td>调用 →</td></tr>
+<tr><td>系统 Tab：SVG 板卡框图（SoC/内存/WiFi/USB3 HUB 扩展板/相机/雷达/手柄/底盘/九轴 IMU/OLED 屏/ROS2 栈，可点击；接线按实物拓扑——雷达/手柄/底盘串口都挂在 HUB 下）</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td>状态灯=<code>mod_status</code>（设备节点存在性 + systemctl + pgrep + lsusb，每 10 s）；点模块=<code>mod_info</code> 白名单脚本拉取该模块的设备文件/服务/进程/日志（HUB=lsusb -t 拓扑；OLED=SSD1306 i2c-5·yahboom_oled 服务；IMU=数据链+ros2 topic hz 实测 10 Hz，约 6 s）。硬件拓扑与软件栈<b>合并为一张 SVG</b>：栈上下倒置（驱动层贴着外设行，UI 层在最底），相机/雷达/手柄/底盘的连线从硬件格<b>直接穿透</b>到各自驱动节点（mipi_cam/oradar/joy_node/Mcnamu_driver 列对齐），传感数据向下流、控制指令向上回（mux→driver 的 /cmd_vel_drv 是唯一上行箭头）；电机×4/IMU/电池内嵌进底盘块（IMU 可点击）；软件栈整体套<b>大虚线框</b>（淡靛蓝底色区分软件区，标题"ROS2 软件栈"白粗体可点击=总览；"RDK X5 主板"标题同样可点击=SoC 详情）；主板与 HUB 之间画 40pin 物理叠层：RDK 40pin 排针 → 风扇扩展板（亚博，顺延排针）→ OLED 排线插角落引脚。亚博出品的硬件（底盘扩展板）与软件（Mcnamu_driver/joy_ctrl/oled.py）统一橙色描边。右栏为<b>单一详情面板</b>，硬件模块与栈节点共用（带 stale-response 防抖），默认显示软件栈总览。按出身四色描边：ROS2 上游/厂商＝蓝、D-Robotics tros＝绿、亚博＝橙、自研＝紫。栈节点可点击（<code>stack_info</code> 白名单）→ 右下第二详情面板：进程 cmdline、<b>程序/配置在哪</b>（unit 文件路径 + ExecStart 启动行由 <code>u()</code> 助手 systemctl 现查；参数 yaml 从活进程 cmdline 现抠，路径变了不说谎）、输出话题 hz 实测（madgwick/ekf/mux/oradar）、rosbridge 在线客户端（ss 查 9090 连接）、Nav2 地图与调参文件路径、driver/joy 的 journal 报错摘录；「本 GUI」节点为本地静态说明。栈框下方另画两个亚博 APP：<b>建图导航 APP</b>＝rosbridge 客户端（订 /map + /robot_pose（robot_pose_publisher_ros2 把 TF 转普通话题）、发 /goal_pose /initialpose /cmd_vel、调 /yahboomAppSaveMap 存图服务（板端跑 nav2 map_saver_cli），与本 GUI 同通道可共存）；<b>手机遥控 APP</b>＝TCP :6000 控制 + :6500 MJPEG，经 app_SunriseRobot.py 直写串口<b>完全绕过 ROS</b>（虚线沿右缘直插 STM32；与 Mcnamu_driver 抢串口故已禁自启——🎮 自检的 app_conflict 查的就是它）。探测脚本共用 <code>pg()</code> 助手（pgrep + 滤 bash -c 自匹配 + 空结果显示"未运行"）。栈底层硬件格点击联动右上硬件详情。mux 实际仲裁只有两级：/cmd_vel_joy（手柄，高）&gt; /cmd_vel（Nav2/键盘共用，低）→ /cmd_vel_drv。注意 Nav2 的 amcl/planner 等是<b>组合节点</b>，同跑一个 component_container，按容器进程探测而非节点名</td><td>拉取 ←</td></tr>
 <tr><td>顶栏「主机在线」灯</td><td>本机 <code>ping -c1 -W1</code>（ICMP，每 3 s）</td><td>独立于 rosbridge——sshd/ROS 起来之前就能看到板子活没活。发电源命令后进入状态机：黄"重启中"直到观察到<b>掉线→回来</b>跳变才回绿（systemd 停 Nav2 栈约 1 min 内 ping 仍通，裸 ping 会误示"在线"）；关机则掉线后定格"已关机"</td><td>探测 ←</td></tr>
 <tr><td>顶栏「连接」按钮</td><td colspan="2">重建到 <code>ws://…:9090</code> 的 WebSocket；断线每 3 s 自动重连</td><td>—</td></tr>
 </table>
@@ -164,7 +165,7 @@ data & control; SSH (:22) for logs & service status.</span>
   <text class="s" x="796" y="420">相机窗 /image_jpeg · 电量 /voltage</text>
   <text class="s" x="796" y="440">拖线→/goal_pose · 终止→cancel+零速</text>
   <rect class="box" x="660" y="480" width="272" height="52" rx="8"/>
-  <text class="t" x="796" y="500">Rust 后端（3 个 async 命令）</text>
+  <text class="t" x="796" y="500">Rust 后端（10 个 async 命令）</text>
   <text class="s" x="796" y="518">journal / service_status / board_info</text>
 
   <!-- flows: sensors -> drivers -->

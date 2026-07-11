@@ -8,13 +8,16 @@ import './camera.js';
 import './health.js';
 import { keyStop } from './teleop.js';
 import { onLogsShown } from './logs.js';
+import { onSysShown } from './system.js';
 
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   S.page = b.dataset.page;
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
-  $('page-dash').classList.toggle('on', S.page === 'dash');
-  $('page-logs').classList.toggle('on', S.page === 'logs');
-  if (S.page === 'logs') { keyStop(); onLogsShown(); }
+  document.querySelectorAll('.page').forEach(p =>
+    p.classList.toggle('on', p.id === 'page-' + S.page));
+  if (S.page !== 'dash') keyStop();
+  if (S.page === 'logs') onLogsShown();
+  if (S.page === 'sys') onSysShown();
 });
 
 // ---- board power buttons: first click arms (red, 3 s), second click fires ----
