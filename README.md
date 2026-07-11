@@ -257,18 +257,43 @@ ros2 launch oradar_lidar ms200_scan_gmapping.launch.py
 
 **推荐：浏览器实时画面 / Live view in browser（rosbridge，已验证）**
 
-板上已装两个**开机自启**服务（unit 文件在仓库 `board/etc/systemd/system/`，重启实测通过）：
+板上已装 **5 个开机自启**服务（unit 文件在仓库 `board/etc/systemd/system/`，重启实测通过）：
 
 | 服务 | 作用 |
 |---|---|
 | `ms200-lidar` | 雷达驱动，发布 `/scan` |
 | `rosbridge` | DDS → WebSocket 桥（`ws://<板子IP>:9090`） |
+| `mipi-cam` | 相机 `/image_jpeg`（等 ISP 就绪再起，防开机竞态） |
+| `nav-bringup` | 底盘驱动 + 里程计/EKF + 手柄 + cmd_vel 仲裁 mux |
+| `nav2` | AMCL + 规划器 + 控制器（自动喂初始位姿；无目标不动车） |
 
 ```bash
-# 开机即用：电脑浏览器打开 docs/lidar-live-viewer.html → 自动连 ws://<板子IP>:9090 实时出图
-# 管理：  systemctl status|stop|disable ms200-lidar rosbridge
+# 开机即全量：浏览器打开 docs/lidar-live-viewer.html → 地图+相机+雷达+电量；拖线=导航
+# 手柄遥控：按 SELECT/BACK 使能（亚博使能锁每次开机复位），推杆即走
+# 换地图/重喂定位：sudo bash /home/sunrise/nav_config/nav_start.sh [map.yaml]
 # 重刷机后恢复：在电脑上跑 scripts/deploy_board.sh（rsync board/ 镜像 + enable 服务）
 ```
+
+### 8.3 自动导航（Nav2）与安全仲裁（2026-07-11 实机验证 ✅）
+
+- **建图**：`yahboomcar_nav` 的 cartographer 链（`map_cartographer_launch.py`），存图
+  `ros2 run nav2_map_server map_saver_cli -f /home/sunrise/maps/room`。当前用图 `room.yaml`。
+- **导航**：`navigation_dwb_launch.py`（Nav2 + AMCL + DWB），调优参数
+  `/home/sunrise/maps/nav_params_tuned.yaml`：`robot_radius 0.1→0.13`、膨胀半径
+  `0.12/0.2→0.35`（否则贴着桌腿擦过去必撞）、限速 `0.26→0.18`。
+- **cmd_vel 仲裁 + 看门狗**（`board/home/sunrise/nav_config/cmd_vel_mux.py`，自研 50 行）：
+  手柄 `/cmd_vel_joy`(优先) 与 Nav2 `/cmd_vel` 汇入 mux → `/cmd_vel_drv` → 驱动。
+  导航中动手柄立即接管，松手 0.5 s 导航恢复；**空闲时持续发零速**（10 Hz）。
+- **事故复盘（重要）**：亚博 `Mcnamu_driver` 的 RGB 灯 I2C 写入无异常保护,按手柄键可致
+  **驱动进程崩死 → MCU 持续执行最后一条非零速度 → ROS 层任何停车手段全部失效**。
+  修复=驱动 `respawn=True` + mux 空闲零速流,实测行驶中 `kill -9` 驱动 ≈1.5 s 内自动刹停。
+  浏览器"终止"按钮**不是急停**——WiFi 断了它就是块砖;真急停=手柄使能键/拎车/电源开关。
+- **手机 APP 与导航互斥**：亚博 APP 直写底盘串口（不走 ROS），与驱动并存会双写抢串口导致
+  车抽搐。其 XFCE 自启已禁（`Start APP Program.desktop` 置 `Hidden=true`，改回即恢复原厂）。
+- **踩坑**：厂商 `cam-service` 单元 `After=multi-user.target` 又 `WantedBy=multi-user.target`，
+  任何 `After=cam-service` 的服务都会构成依赖环 → **systemd 开机静默丢弃 job（无日志）**；
+  `ros2 topic pub --once` 会在 DDS 发现完成前发完退出（消息丢失），要加 `-w 1` 等订阅者。
+- **电量**：`/voltage`（2S 18650，满 8.4 V；≈7.6 V 扩展板蜂鸣报警+限电机）。viewer 顶栏显示百分比。
 
 坑位记录 / Pitfalls（都踩实过）：
 - **systemd-run 必须给 `HOME`**（或 `ROS_LOG_DIR`），否则 rcl 日志初始化 abort：
@@ -289,9 +314,17 @@ yahboom-rdk-x5/
 ├── CLAUDE.md / AGENTS.md           # 给 AI 协作工具的项目说明
 ├── .memory/                        # 跨工具持久记忆（协议 SKILL.md + 索引 + 事实）
 ├── board/                          # 板端文件 1:1 镜像（路径与板子一致，重刷机后一键恢复）
-│   ├── etc/systemd/system/         #   自启服务
+│   ├── etc/systemd/system/         #   自启服务（5 个，见 §8.2）
 │   │   ├── ms200-lidar.service     #     → 雷达驱动（发布 /scan）
-│   │   └── rosbridge.service       #     → websocket 桥（ws://:9090）
+│   │   ├── rosbridge.service       #     → websocket 桥（ws://:9090）
+│   │   ├── mipi-cam.service        #     → 相机（等 ISP 就绪，防竞态/依赖环，见 §8.3）
+│   │   ├── nav-bringup.service     #     → 底盘+手柄+cmd_vel 仲裁 mux
+│   │   └── nav2.service            #     → Nav2 导航栈（自动喂初始位姿）
+│   ├── home/sunrise/nav_config/    #   导航自定义件
+│   │   ├── bringup_mux_launch.py   #     → 带仲裁的底盘 bringup（驱动 respawn）
+│   │   ├── cmd_vel_mux.py          #     → 优先级仲裁+看门狗（cmd_vel_guard 种子）
+│   │   └── nav_start.sh            #     → 换地图/重喂 AMCL 一键脚本
+│   ├── home/sunrise/.config/autostart/  # 亚博 APP 自启已置 Hidden=true（§8.3）
 │   └── home/sunrise/scripts/  #   板端脚本（与板子同版本）
 │       ├── wifi_client.sh          #     → 客户端模式（连路由器，失败自动回滚 AP）
 │       ├── wifi_ap.sh              #     → 恢复 AP 热点模式
@@ -306,7 +339,7 @@ yahboom-rdk-x5/
     ├── rdk-x5-system-report.html              # SSH 实采的系统体检报告（离线可看）
     ├── rdk-x5-wifi-client-guide.html          # WiFi 客户端切换实机指南
     ├── rdk-x5-mipi-camera-preview-guide.html  # MIPI 相机预览排障指南
-    ├── lidar-live-viewer.html                 # MS200 雷达浏览器实时查看器（零依赖，见 §8.2）
+    ├── lidar-live-viewer.html                 # 浏览器实时仪表盘：地图/雷达/相机/电量/拖线导航/终止（§8.2-8.3）
     └── rdk-x5-official-experiments-and-advanced-practice.html
                                                # 官方实验取舍、进阶项目与 4090 端云推理路线
 ```

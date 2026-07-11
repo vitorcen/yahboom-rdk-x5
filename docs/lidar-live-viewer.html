@@ -2,173 +2,416 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>MS200 LiDAR 实时查看器</title>
+<title>RDK X5 雷达/建图/导航 实时查看器</title>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; background:#0b0e14; color:#cdd6f4; font:14px/1.5 system-ui,sans-serif;
          display:flex; flex-direction:column; align-items:center; min-height:100vh; }
-  header { padding:10px 16px; width:100%; box-sizing:border-box; display:flex; gap:16px;
+  header { padding:10px 16px; width:100%; box-sizing:border-box; display:flex; gap:12px;
            align-items:center; flex-wrap:wrap; }
   h1 { font-size:16px; margin:0; font-weight:600; }
   .pill { padding:2px 10px; border-radius:999px; font-size:12px; background:#31344b; }
   .ok  { background:#1e3a2f; color:#7ee2a8; }
   .bad { background:#3a1e1e; color:#f38ba8; }
   canvas { background:#0f131f; border:1px solid #262b3d; border-radius:8px;
-           max-width:96vw; max-height:82vh; }
-  input { width:280px; background:#161a26; color:#cdd6f4; border:1px solid #31344b;
+           max-width:96vw; max-height:80vh; cursor:crosshair; }
+  #wrap { position:relative; }
+  #cam { position:absolute; top:10px; right:10px; width:320px; border:1px solid #31344b;
+         border-radius:8px; background:#000; display:none; cursor:pointer; }
+  #cam.big { width:640px; }
+  input { width:250px; background:#161a26; color:#cdd6f4; border:1px solid #31344b;
           border-radius:6px; padding:4px 8px; }
   button { background:#2b5c8a; color:#fff; border:0; border-radius:6px; padding:5px 14px; cursor:pointer; }
-  button:hover { background:#367; }
+  button.mode { background:#31344b; }
+  button.mode.on { background:#2b5c8a; }
   #stats { font-size:12px; color:#8b93b5; }
+  #hint { font-size:12px; color:#8b93b5; padding:4px 16px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>ORADAR MS200 · /scan 实时</h1>
+  <h1>RDK X5 实时</h1>
   <input id="url" value="ws://192.168.3.187:9090">
   <button id="btn">连接</button>
   <span id="st" class="pill bad">未连接</span>
+  <button id="mScan" class="mode">雷达</button>
+  <button id="mMap"  class="mode on">地图</button>
+  <button id="stop" style="background:#a33">■ 终止</button>
+  <span id="batt" class="pill" style="display:none"></span>
   <span id="stats"></span>
 </header>
-<canvas id="cv" width="900" height="900"></canvas>
+<div id="hint">地图模式：滚轮缩放 · 在地图上<b>按下并拖动</b>＝设导航目标（按下点=位置，拖动方向=朝向，松开发送）· 再画一条＝自动终止旧目标换新目标 · <b>■ 终止</b>＝取消+刹停</div>
+<div id="wrap">
+  <canvas id="cv" width="1000" height="1000"></canvas>
+  <img id="cam" alt="camera" title="点击放大/缩小">
+</div>
 
-<section id="how" style="max-width:900px;padding:24px 16px 48px;color:#aab2d0">
+<section id="how" style="max-width:1000px;padding:24px 16px 48px;color:#aab2d0">
 <h2 style="color:#cdd6f4;font-size:15px">原理 / How it works</h2>
 <p>
 数据链路：MS200 雷达经串口（<code>/dev/oradar → ttyACM0</code>）进入板端 <code>oradar_scan</code>
-驱动节点，以 10 Hz 发布 ROS 2 话题 <code>/scan</code>（<code>sensor_msgs/LaserScan</code>，450 点/圈）。
-<code>rosbridge_server</code> 在板上把 DDS 话题桥接成 WebSocket（:9090）+ JSON。本页面用
-<strong>手写的最小 rosbridge v2 客户端</strong>（原生 <code>WebSocket</code>，零外部依赖、无 CDN）发送一条
-<code>{op:"subscribe", topic:"/scan"}</code>，之后每帧 <code>publish</code> 消息到达即重绘 Canvas。
-<br>Pipeline: serial → ROS 2 driver → rosbridge (DDS→WebSocket/JSON) → hand-rolled JS client → Canvas.
+驱动节点，以 10 Hz 发布 <code>/scan</code>；底盘 <code>Mcnamu_driver</code>+EKF 发布 <code>/odom</code> 与 TF；
+Cartographer 消费 <code>/scan</code>+<code>/odom</code> 增量建图，occupancy_grid 节点以 1 Hz 发布
+<code>/map</code>；Nav2 导航时再发布 <code>/plan</code>。<code>rosbridge_server</code> 把这些 DDS 话题桥接成
+WebSocket（:9090）+ JSON。本页面用<strong>手写的最小 rosbridge v2 客户端</strong>（原生
+<code>WebSocket</code>，零外部依赖）订阅上述话题渲染到 Canvas；反向还会
+<code>advertise</code> <code>/goal_pose</code>——在地图上拖一下即发布导航目标，Nav2 收到后驱动底盘。
+<br>Pipeline: serial → driver → cartographer/Nav2 → rosbridge (DDS→WebSocket/JSON) →
+hand-rolled JS client → Canvas; goals flow back via /goal_pose.
 </p>
 
-<svg viewBox="0 0 860 320" role="img" aria-label="数据链路框图" style="width:100%;height:auto;margin:12px 0">
+<svg viewBox="0 0 880 400" role="img" aria-label="数据链路框图" style="width:100%;height:auto;margin:12px 0">
   <defs>
     <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
       <path d="M0,0 L8,4 L0,8 z" fill="#6c7bd0"/>
     </marker>
+    <marker id="arrg" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#7ee2a8"/>
+    </marker>
   </defs>
   <style>
-    .box{fill:#161a26;stroke:#31344b;rx:8}
+    .box{fill:#161a26;stroke:#31344b}
     .t{fill:#cdd6f4;font:13px system-ui;text-anchor:middle}
     .s{fill:#8b93b5;font:11px system-ui;text-anchor:middle}
     .lbl{fill:#7ea6e0;font:11px system-ui;text-anchor:middle}
     .flow{stroke:#6c7bd0;stroke-width:1.6;marker-end:url(#arr);fill:none}
+    .back{stroke:#7ee2a8;stroke-width:1.6;marker-end:url(#arrg);fill:none;stroke-dasharray:6 4}
     .zone{fill:none;stroke:#31344b;stroke-dasharray:5 4}
     .zt{fill:#5d6485;font:11px system-ui}
   </style>
-  <!-- 板端区域 -->
-  <rect class="zone" x="10" y="30" width="520" height="200"/>
+  <rect class="zone" x="10" y="30" width="545" height="330"/>
   <text class="zt" x="20" y="22">RDK X5 板端 (192.168.3.187)</text>
-  <!-- 本机区域 -->
-  <rect class="zone" x="570" y="30" width="280" height="200"/>
-  <text class="zt" x="580" y="22">你的电脑浏览器</text>
+  <rect class="zone" x="595" y="30" width="275" height="330"/>
+  <text class="zt" x="605" y="22">你的电脑浏览器</text>
 
-  <rect class="box" x="25"  y="70" width="130" height="70" rx="8"/>
-  <text class="t" x="90" y="98">ORADAR MS200</text>
-  <text class="s" x="90" y="118">360° 2D 激光雷达</text>
+  <rect class="box" x="25"  y="60" width="120" height="56" rx="8"/>
+  <text class="t" x="85" y="84">MS200 雷达</text><text class="s" x="85" y="102">串口 10 Hz</text>
+  <rect class="box" x="25"  y="150" width="120" height="56" rx="8"/>
+  <text class="t" x="85" y="174">底盘+IMU</text><text class="s" x="85" y="192">Mcnamu_driver/EKF</text>
 
-  <rect class="box" x="205" y="70" width="140" height="70" rx="8"/>
-  <text class="t" x="275" y="92">oradar_scan 节点</text>
-  <text class="s" x="275" y="110">ms200_scan.launch.py</text>
-  <text class="s" x="275" y="126">systemd-run 常驻</text>
+  <rect class="box" x="195" y="60" width="130" height="56" rx="8"/>
+  <text class="t" x="260" y="84">oradar_scan</text><text class="s" x="260" y="102">/scan</text>
+  <rect class="box" x="195" y="150" width="130" height="56" rx="8"/>
+  <text class="t" x="260" y="174">odom + TF</text><text class="s" x="260" y="192">/odom /tf</text>
 
-  <rect class="box" x="390" y="70" width="125" height="70" rx="8"/>
-  <text class="t" x="452" y="98">rosbridge</text>
-  <text class="s" x="452" y="118">DDS → WS/JSON</text>
+  <rect class="box" x="375" y="60" width="150" height="146" rx="8"/>
+  <text class="t" x="450" y="96">Cartographer</text>
+  <text class="s" x="450" y="114">SLAM 建图 → /map</text>
+  <text class="t" x="450" y="152">Nav2</text>
+  <text class="s" x="450" y="170">规划/控制 → /plan</text>
+  <text class="s" x="450" y="186">← /goal_pose</text>
 
-  <rect class="box" x="600" y="70" width="220" height="70" rx="8"/>
-  <text class="t" x="710" y="92">本页 JS 客户端 + Canvas</text>
-  <text class="s" x="710" y="110">subscribe /scan → 逐帧重绘</text>
-  <text class="s" x="710" y="126">极坐标→直角坐标，x前=屏上</text>
+  <rect class="box" x="375" y="250" width="150" height="66" rx="8"/>
+  <text class="t" x="450" y="278">rosbridge</text>
+  <text class="s" x="450" y="298">DDS ⇄ WS/JSON :9090</text>
 
-  <line class="flow" x1="155" y1="105" x2="205" y2="105"/>
-  <text class="lbl" x="180" y="95">串口</text>
-  <line class="flow" x1="345" y1="105" x2="390" y2="105"/>
-  <text class="lbl" x="368" y="95">/scan</text>
-  <line class="flow" x1="515" y1="105" x2="600" y2="105"/>
-  <text class="lbl" x="558" y="95">ws://:9090</text>
+  <rect class="box" x="620" y="250" width="225" height="66" rx="8"/>
+  <text class="t" x="732" y="274">本页 JS + Canvas</text>
+  <text class="s" x="732" y="292">/map 栅格 + 位姿 + /scan + /plan</text>
+  <text class="s" x="732" y="308">拖动 → 发布 /goal_pose</text>
 
-  <!-- 底部注释行 -->
-  <rect class="box" x="25" y="250" width="795" height="52" rx="8"/>
-  <text class="s" x="422" y="272">LaserScan 帧：angle_min + i × angle_increment 得每点角度 a，距离 r → 屏幕坐标 (x,y) = (−sin a·r, −cos a·r)·缩放</text>
-  <text class="s" x="422" y="290">过滤 r ∉ (range_min, range_max) 的无效点；显示半径取有效距离 95 分位 ×1.2 自适应（最小 2 m）</text>
+  <line class="flow" x1="145" y1="88" x2="195" y2="88"/>
+  <line class="flow" x1="145" y1="178" x2="195" y2="178"/>
+  <line class="flow" x1="325" y1="88" x2="375" y2="88"/>
+  <line class="flow" x1="325" y1="178" x2="375" y2="178"/>
+  <line class="flow" x1="450" y1="206" x2="450" y2="250"/>
+  <line class="flow" x1="525" y1="283" x2="620" y2="283"/>
+  <text class="lbl" x="572" y="273">ws://:9090</text>
+  <path class="back" d="M 732 316 Q 732 350 560 350 Q 460 350 455 320"/>
+  <text class="lbl" x="600" y="344">/goal_pose（点击地图）</text>
 </svg>
 
 <p style="font-size:12px">
-为什么不用板端 rviz2：rviz2 在本板 X 桌面稳定段错误（Ogre/GL 栈，软件渲染也崩）。
-浏览器方案帧率更高、跨平台、无需 VNC。启动/停止命令见仓库 README §8.2。
-<br>Why not rviz2 on the board: it consistently segfaults (Ogre/GL); this browser viewer is
-lighter and needs no VNC. See README §8.2 for start/stop commands.
+渲染细节：/map 是 <code>nav_msgs/OccupancyGrid</code>（row-major，-1 未知 / 0 空闲 / 100 占用），
+按 origin+resolution 画到离屏 canvas 再缩放贴图（世界 y 向上 → 屏幕 y 向下翻转）。机器人位姿由
+/tf + /tf_static 在页面内组合（map→odom→base_footprint，2D 平面只取 yaw）。雷达点按
+map→lidar_link 变换叠加。为什么不用板端 rviz2：它在本板 X 上稳定段错误（Ogre/GL）。
+启动/停止见 README §8.2。
 </p>
 </section>
 
 <script>
-// Minimal hand-rolled rosbridge v2 client: subscribe sensor_msgs/LaserScan on /scan.
+// Minimal hand-rolled rosbridge v2 client. No external deps.
 const cv = document.getElementById('cv'), cx = cv.getContext('2d');
 const st = document.getElementById('st'), stats = document.getElementById('stats');
-let ws = null, frames = 0, lastT = performance.now(), fps = 0;
-let viewRange = 4.0;              // meters shown from center to edge; auto-adapts
+let ws = null, mode = 'map', reconnectTimer = null;
+let scanMsg = null, mapMsg = null, planMsg = null;
+let frames = 0, lastT = performance.now(), fps = 0;
+let viewRange = 4.0;                 // polar mode range (m)
+let zoom = 1.0;                      // map mode zoom factor
+const tfDict = {};                   // child -> {parent, x, y, yaw}
+let goalDrag = null;                 // {x0,y0} canvas px while dragging
+const mapCanvas = document.createElement('canvas');   // offscreen grid raster
 
 function connect() {
-  if (ws) { ws.close(); ws = null; }
+  clearTimeout(reconnectTimer);
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
   ws = new WebSocket(document.getElementById('url').value);
   st.textContent = '连接中…'; st.className = 'pill';
   ws.onopen = () => {
     st.textContent = '已连接'; st.className = 'pill ok';
-    ws.send(JSON.stringify({ op:'subscribe', topic:'/scan',
-      type:'sensor_msgs/LaserScan', throttle_rate:0, queue_length:1 }));
+    const sub = (topic, type, throttle) => ws.send(JSON.stringify(
+      { op:'subscribe', topic, type, throttle_rate: throttle||0, queue_length:1 }));
+    sub('/scan', 'sensor_msgs/LaserScan');
+    sub('/map', 'nav_msgs/OccupancyGrid', 1000);
+    sub('/plan', 'nav_msgs/Path', 500);
+    sub('/tf', 'tf2_msgs/TFMessage', 100);
+    sub('/tf_static', 'tf2_msgs/TFMessage');
+    sub('/image_jpeg', 'sensor_msgs/CompressedImage', 66);    // ~15 fps; JPEG 板端硬编码, 46KB/帧 ≈ 7.4 Mbps
+    sub('/voltage', 'std_msgs/Float32', 5000);                // 电池电压, 5s 一次足够
+    ws.send(JSON.stringify({ op:'advertise', topic:'/goal_pose', type:'geometry_msgs/PoseStamped' }));
+    ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel', type:'geometry_msgs/Twist' }));
   };
-  ws.onclose = () => { st.textContent = '已断开'; st.className = 'pill bad'; };
+  ws.onclose = () => { st.textContent = '已断开,3s后重连…'; st.className = 'pill bad';
+                       clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 3000); };
   ws.onerror  = () => { st.textContent = '连接失败'; st.className = 'pill bad'; };
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.op === 'publish' && m.topic === '/scan') draw(m.msg);
+    if (m.op !== 'publish') return;
+    if (m.topic === '/scan') { scanMsg = m.msg; if (mode==='scan') render(); }
+    else if (m.topic === '/map') { mapMsg = m.msg; rasterizeMap(); if (mode==='map') render(); }
+    else if (m.topic === '/plan') { planMsg = m.msg; }
+    else if (m.topic === '/image_jpeg') {
+      const el = document.getElementById('cam');
+      el.src = 'data:image/jpeg;base64,' + m.msg.data;
+      el.style.display = 'block';
+    }
+    else if (m.topic === '/voltage') {
+      // 2S 18650: 8.4 V full, ~6.9 V empty (linear approx; buzzer alarms ≈7.6 V)
+      const v = m.msg.data;
+      const pct = Math.max(0, Math.min(100, Math.round((v - 6.9) / (8.4 - 6.9) * 100)));
+      const el = document.getElementById('batt');
+      el.style.display = 'inline';
+      el.textContent = `🔋${pct}% (${v.toFixed(1)}V)`;
+      el.className = 'pill ' + (pct > 45 ? 'ok' : pct > 25 ? '' : 'bad');
+      if (pct <= 25) el.textContent += ' 请充电';
+    }
+    else if (m.topic === '/tf' || m.topic === '/tf_static') {
+      for (const t of m.msg.transforms) {
+        const q = t.transform.rotation;
+        tfDict[t.child_frame_id] = { parent: t.header.frame_id,
+          x: t.transform.translation.x, y: t.transform.translation.y,
+          yaw: Math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z)) };
+      }
+      if (mode==='map') render();
+    }
   };
 }
 
-function draw(scan) {
-  const W = cv.width, H = cv.height, R = Math.min(W,H)/2 - 20;
-  const cxp = W/2, cyp = H/2;
-  // auto range: 95th percentile of finite ranges, snapped up, min 2 m
+// Compose 2D transform target<-source by walking child->parent links.
+function lookup(target, source) {
+  let chain = [], cur = source, guard = 0;
+  while (cur !== target) {
+    const t = tfDict[cur];
+    if (!t || ++guard > 20) return null;
+    chain.push(t); cur = t.parent;
+  }
+  let x = 0, y = 0, yaw = 0;                       // accumulate from target down
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const t = chain[i];
+    x += Math.cos(yaw)*t.x - Math.sin(yaw)*t.y;
+    y += Math.sin(yaw)*t.x + Math.cos(yaw)*t.y;
+    yaw += t.yaw;
+  }
+  return { x, y, yaw };
+}
+function robotPose() {
+  return lookup('map','base_footprint') || lookup('map','base_link')
+      || lookup('odom','base_footprint') || lookup('odom','base_link');
+}
+
+// OccupancyGrid -> offscreen canvas (1 cell = 1 px), row 0 at bottom of world.
+function rasterizeMap() {
+  const g = mapMsg; if (!g) return;
+  const w = g.info.width, h = g.info.height;
+  mapCanvas.width = w; mapCanvas.height = h;
+  const img = mapCanvas.getContext('2d').createImageData(w, h);
+  const d = (typeof g.data === 'string')
+    ? Uint8Array.from(atob(g.data), c => c.charCodeAt(0)) : g.data;
+  for (let i = 0; i < w*h; i++) {
+    let v = d[i]; if (v > 127) v -= 256;           // int8 from possibly-unsigned source
+    const row = (i / w) | 0, col = i % w;
+    const j = ((h - 1 - row) * w + col) * 4;        // flip y for screen
+    let r, gg, b;
+    if (v < 0)       { r=26; gg=30; b=44; }         // unknown
+    else if (v < 50) { r=52; gg=60; b=82; }         // free
+    else             { r=249; gg=169; b=74; }       // occupied
+    img.data[j]=r; img.data[j+1]=gg; img.data[j+2]=b; img.data[j+3]=255;
+  }
+  mapCanvas.getContext('2d').putImageData(img, 0, 0);
+}
+
+// World (map frame, meters) -> canvas px, for current map raster + zoom.
+function w2c() {
+  const g = mapMsg.info, W = cv.width, H = cv.height;
+  const base = Math.min(W / (g.width*g.resolution), H / (g.height*g.resolution));
+  const s = base * zoom;
+  const pose = robotPose();
+  // center view on robot when zoomed, else on map center
+  const cxw = zoom > 1.01 && pose ? pose.x : g.origin.position.x + g.width*g.resolution/2;
+  const cyw = zoom > 1.01 && pose ? pose.y : g.origin.position.y + g.height*g.resolution/2;
+  return {
+    s,
+    px: wx => W/2 + (wx - cxw) * s,
+    py: wy => H/2 - (wy - cyw) * s,
+    wx: px => (px - W/2)/s + cxw,
+    wy: py => -(py - H/2)/s + cyw,
+  };
+}
+
+function render() {
+  cx.clearRect(0, 0, cv.width, cv.height);
+  if (mode === 'map' && mapMsg) renderMap();
+  else renderScan();
+  frames++;
+  const now = performance.now();
+  if (now - lastT > 1000) { fps = frames*1000/(now-lastT); frames = 0; lastT = now; }
+}
+
+function renderMap() {
+  const g = mapMsg.info, t = w2c();
+  const ox = t.px(g.origin.position.x);
+  const oy = t.py(g.origin.position.y + g.height*g.resolution);
+  cx.imageSmoothingEnabled = false;
+  cx.drawImage(mapCanvas, ox, oy, g.width*g.resolution*t.s, g.height*g.resolution*t.s);
+  // plan path
+  if (planMsg && planMsg.poses.length) {
+    cx.strokeStyle = '#7ee2a8'; cx.lineWidth = 2; cx.beginPath();
+    planMsg.poses.forEach((p, i) => {
+      const X = t.px(p.pose.position.x), Y = t.py(p.pose.position.y);
+      i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
+    });
+    cx.stroke();
+  }
+  // live scan overlay in map frame
+  const lp = lookup('map','lidar_link') || lookup('map','laser') || lookup('map','laser_link');
+  if (scanMsg && lp) {
+    cx.fillStyle = '#f38ba8';
+    for (let i = 0; i < scanMsg.ranges.length; i++) {
+      const r = scanMsg.ranges[i];
+      if (!(r > scanMsg.range_min && r < scanMsg.range_max && isFinite(r))) continue;
+      const a = lp.yaw + scanMsg.angle_min + i*scanMsg.angle_increment;
+      cx.fillRect(t.px(lp.x + Math.cos(a)*r)-1, t.py(lp.y + Math.sin(a)*r)-1, 2, 2);
+    }
+  }
+  // robot
+  const pose = robotPose();
+  if (pose) {
+    const X = t.px(pose.x), Y = t.py(pose.y);
+    cx.fillStyle = '#7ee2a8';
+    cx.beginPath();
+    cx.moveTo(X + 12*Math.cos(pose.yaw),      Y - 12*Math.sin(pose.yaw));
+    cx.lineTo(X + 8*Math.cos(pose.yaw+2.5),   Y - 8*Math.sin(pose.yaw+2.5));
+    cx.lineTo(X + 8*Math.cos(pose.yaw-2.5),   Y - 8*Math.sin(pose.yaw-2.5));
+    cx.closePath(); cx.fill();
+  }
+  // goal drag arrow
+  if (goalDrag && goalDrag.x1 !== undefined) {
+    cx.strokeStyle = '#f9e2af'; cx.lineWidth = 2; cx.beginPath();
+    cx.moveTo(goalDrag.x0, goalDrag.y0); cx.lineTo(goalDrag.x1, goalDrag.y1); cx.stroke();
+  }
+  stats.textContent = `map ${g.width}×${g.height} @${g.resolution} m · ${fps.toFixed(1)} fps · zoom ${zoom.toFixed(1)}×`
+    + (pose ? ` · 位姿 (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)})` : ' · 等TF…');
+}
+
+function renderScan() {
+  const scan = scanMsg; if (!scan) { stats.textContent = '等 /scan…'; return; }
+  const W = cv.width, H = cv.height, R = Math.min(W,H)/2 - 20, cxp = W/2, cyp = H/2;
   const finite = scan.ranges.filter(r => r > scan.range_min && r < scan.range_max && isFinite(r));
   if (finite.length) {
     const s = [...finite].sort((a,b)=>a-b);
-    const p95 = s[Math.floor(s.length*0.95)];
-    viewRange = Math.max(2, Math.ceil(p95*1.2*2)/2);
+    viewRange = Math.max(2, Math.ceil(s[Math.floor(s.length*0.95)]*1.2*2)/2);
   }
-  cx.clearRect(0,0,W,H);
-  // grid rings each 1 m
   cx.strokeStyle = '#232838'; cx.fillStyle = '#5d6485'; cx.font = '11px system-ui';
   for (let m = 1; m <= viewRange; m++) {
     const r = R * m/viewRange;
     cx.beginPath(); cx.arc(cxp, cyp, r, 0, Math.PI*2); cx.stroke();
     cx.fillText(m + ' m', cxp + r*0.7071 + 3, cyp - r*0.7071 - 3);
   }
-  cx.beginPath(); cx.moveTo(cxp-R,cyp); cx.lineTo(cxp+R,cyp);
-  cx.moveTo(cxp,cyp-R); cx.lineTo(cxp,cyp+R); cx.stroke();
-  // robot marker (x forward = up)
   cx.fillStyle = '#7ee2a8';
   cx.beginPath(); cx.moveTo(cxp,cyp-10); cx.lineTo(cxp-6,cyp+8); cx.lineTo(cxp+6,cyp+8);
   cx.closePath(); cx.fill();
-  // scan points: ROS x-forward/y-left -> screen up/left
   cx.fillStyle = '#f9a94a';
   let n = 0;
   for (let i = 0; i < scan.ranges.length; i++) {
     const r = scan.ranges[i];
     if (!(r > scan.range_min && r < scan.range_max && isFinite(r))) continue;
     const a = scan.angle_min + i*scan.angle_increment;
-    const px = cxp - Math.sin(a) * r/viewRange * R;   // y-left -> screen-left
-    const py = cyp - Math.cos(a) * r/viewRange * R;   // x-forward -> screen-up
-    cx.fillRect(px-1.5, py-1.5, 3, 3); n++;
+    cx.fillRect(cxp - Math.sin(a)*r/viewRange*R - 1.5, cyp - Math.cos(a)*r/viewRange*R - 1.5, 3, 3);
+    n++;
   }
-  frames++;
-  const now = performance.now();
-  if (now - lastT > 1000) { fps = frames*1000/(now-lastT); frames = 0; lastT = now; }
-  stats.textContent = `${n} 点 · ${fps.toFixed(1)} 帧/s · 显示半径 ${viewRange} m · frame ${scan.header.frame_id}`;
+  stats.textContent = `${n} 点 · ${fps.toFixed(1)} fps · 半径 ${viewRange} m`;
 }
 
+// --- goal setting: press = position, drag = heading, release = publish /goal_pose ---
+cv.addEventListener('mousedown', e => {
+  if (mode !== 'map' || !mapMsg) return;
+  const r = cv.getBoundingClientRect();
+  goalDrag = { x0: (e.clientX-r.left)*cv.width/r.width, y0: (e.clientY-r.top)*cv.height/r.height };
+});
+cv.addEventListener('mousemove', e => {
+  if (!goalDrag) return;
+  const r = cv.getBoundingClientRect();
+  goalDrag.x1 = (e.clientX-r.left)*cv.width/r.width; goalDrag.y1 = (e.clientY-r.top)*cv.height/r.height;
+  render();
+});
+function cancelAllGoals() {
+  ws.send(JSON.stringify({ op:'call_service',
+    service:'/navigate_to_pose/_action/cancel_goal', type:'action_msgs/srv/CancelGoal',
+    args:{ goal_info:{ goal_id:{ uuid:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] },
+                       stamp:{ sec:0, nanosec:0 } } } }));
+}
+cv.addEventListener('mouseup', e => {
+  if (goalDrag && (!ws || ws.readyState !== 1)) {
+    stats.textContent = '⚠️ 未连接,目标没有发出'; goalDrag = null; render(); return;
+  }
+  if (!goalDrag || !mapMsg || !ws || ws.readyState !== 1) { goalDrag = null; return; }
+  const t = w2c();
+  const gx = t.wx(goalDrag.x0), gy = t.wy(goalDrag.y0);
+  const yaw = (goalDrag.x1 !== undefined)
+    ? Math.atan2(-(goalDrag.y1-goalDrag.y0), goalDrag.x1-goalDrag.x0) : 0;
+  goalDrag = null;
+  cancelAllGoals();                        // preempt: kill previous goal first
+  planMsg = null;                          // clear stale path from screen
+  setTimeout(() => {                       // then send the new goal
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ op:'publish', topic:'/goal_pose', msg:{
+      header:{ frame_id:'map', stamp:{sec:0, nanosec:0} },
+      pose:{ position:{x:gx, y:gy, z:0},
+             orientation:{x:0, y:0, z:Math.sin(yaw/2), w:Math.cos(yaw/2)} } } }));
+    stats.textContent = `已终止旧目标，新目标 (${gx.toFixed(2)}, ${gy.toFixed(2)}, ${(yaw*180/Math.PI).toFixed(0)}°)`;
+  }, 200);
+});
+cv.addEventListener('wheel', e => {
+  if (mode !== 'map') return;
+  e.preventDefault();
+  zoom = Math.min(10, Math.max(1, zoom * (e.deltaY < 0 ? 1.2 : 1/1.2)));
+  render();
+}, { passive:false });
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('mScan').classList.toggle('on', m==='scan');
+  document.getElementById('mMap').classList.toggle('on', m==='map');
+  render();
+}
+// Stop: cancel all Nav2 goals (zero uuid = cancel all) + brake with zero twist.
+document.getElementById('stop').onclick = () => {
+  if (!ws || ws.readyState !== 1) {
+    stats.textContent = '⚠️ 未连接,终止没有发出!等待重连或检查小车'; return;
+  }
+  cancelAllGoals();
+  planMsg = null;
+  const zero = { linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} };
+  for (let i = 0; i < 5; i++)
+    setTimeout(() => ws && ws.readyState===1 &&
+      ws.send(JSON.stringify({ op:'publish', topic:'/cmd_vel', msg:zero })), i*100);
+  stats.textContent = '已发送终止：取消导航目标 + 刹停';
+};
+
+document.getElementById('mScan').onclick = () => setMode('scan');
+document.getElementById('mMap').onclick  = () => setMode('map');
+document.getElementById('cam').onclick = e => e.target.classList.toggle('big');
 document.getElementById('btn').onclick = connect;
 connect();
 </script>

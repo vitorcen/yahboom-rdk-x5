@@ -1,0 +1,16 @@
+[Unit]
+Description=Nav2 stack (AMCL + planner + controller) on the saved map
+After=network.target nav-bringup.service ms200-lidar.service
+Wants=nav-bringup.service ms200-lidar.service
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; source /home/sunrise/yahboomcar_ws/install/setup.bash; exec ros2 launch yahboomcar_nav navigation_dwb_launch.py map:=/home/sunrise/maps/room.yaml params_file:=/home/sunrise/maps/nav_params_tuned.yaml"
+# Seed AMCL once Nav2 is up (wide covariance at map origin; converges as the car moves)
+ExecStartPost=/bin/bash -c "source /opt/tros/humble/setup.bash; export ROS_DOMAIN_ID=99; timeout 120 bash -c 'until ros2 topic info /goal_pose 2>/dev/null | grep -q \"Subscription count: [1-9]\"; do sleep 3; done'; ros2 topic pub -t 3 -w 1 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped '{header: {frame_id: map}, pose: {pose: {position: {x: 0.0, y: 0.0}, orientation: {w: 1.0}}, covariance: [1.0,0,0,0,0,0, 0,1.0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.3]}}' >/dev/null 2>&1 || true"
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

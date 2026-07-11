@@ -1,0 +1,13 @@
+[Unit]
+Description=Chassis bringup: Mcnamu driver + odom/EKF + joystick + cmd_vel mux
+After=network.target
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; source /home/sunrise/yahboomcar_ws/install/setup.bash; exec ros2 launch /home/sunrise/nav_config/bringup_mux_launch.py"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

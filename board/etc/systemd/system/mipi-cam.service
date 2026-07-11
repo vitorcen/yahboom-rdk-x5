@@ -1,0 +1,21 @@
+[Unit]
+Description=tros mipi_cam + websocket (camera on :8000, /image_jpeg)
+# Do NOT order After=cam-service.service: vendor's cam-service is both
+# After=multi-user.target and WantedBy=multi-user.target, so ordering after it
+# forms a cycle (mipi-cam -> cam-service -> multi-user -> mipi-cam) and systemd
+# silently drops this job at boot. Restart below retries until ISP is up.
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+# Wait for the vendor ISP middleware (cam-service, ordered after multi-user —
+# can't use After= without a cycle). mipi_cam hangs silently if ISP isn't up.
+ExecStartPre=/bin/bash -c "timeout 120 bash -c 'until systemctl is-active --quiet cam-service && test -e /dev/isc; do sleep 2; done'; sleep 3"
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; exec ros2 launch mipi_cam mipi_cam_websocket.launch.py"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
