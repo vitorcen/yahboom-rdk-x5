@@ -1,13 +1,13 @@
 ---
 name: rdk-x5-robot-status
-description: Yahboom RDK X5 小车板子的接入方式与实验进度（IP/VNC/相机预览已验证）
+description: Yahboom RDK X5 小车的接入、已验证外设与进阶实践路线
 metadata: 
   node_type: memory
   type: project
   originSessionId: 40f63512-00a9-4c05-8887-87341df6fa74
 ---
 
-亚博 RDK X5 ROBOT 小车（地平线 RDK X5 主控，Ubuntu 22.04 + ROS2 Humble + tros 2.3.0）。仓库 `/home/david/work/RDK-experience`。远程用 `sshpass -e ssh`（把 `SSHPASS` 设为 root 口令，**口令不入库，向用户获取**）。
+亚博 RDK X5 ROBOT 小车（地平线 RDK X5 主控，Ubuntu 22.04 + ROS2 Humble + tros 2.3.0）。仓库 `/Users/david/work_ai/yahboom-rdk-x5`。远程用 `sshpass -e ssh`（把 `SSHPASS` 设为 root 口令，**口令不入库，向用户获取**）。
 
 > ⚠️ 凭据（SSH/VNC/AP/家用 WiFi/本机 sudo 密码）**一律不写进本仓库**（`.memory/` 会随 git 提交）。需要时向用户索取或从本机安全存储读取。下面只记结构，不记明文。
 
@@ -27,3 +27,8 @@ metadata:
 - 模式切换：`camera_mode.sh` 支持 `tros`、`yahboom` 和 `hybrid`。hybrid 用 control-only 包装器保留亚博 TCP 6000 遥控，由 TogetheROS 独占 CSI0 并在 8000 提供视频。
 
 用户偏好：中文沟通、直接犀利；每弄清一个问题就让我把结论记进 README 存档。
+
+**进阶路线（2026-07-10）**：新增 `docs/rdk-x5-official-experiments-and-advanced-practice.html`，按 P0/P1/P2 整理官方实验，并给出 Nav2、速度安全监督、数据采集、BPU 感知、Wi-Fi ROS 2 远端推理与 LiDAR-to-Action 的渐进项目清单。
+- RDK X5 负责传感器接入、底盘驱动和本地安全闭环；4090 负责训练与大模型推理。远端动作只能是 proposal，RDK 侧必须做 watchdog、scan 近场约束、限速和过期动作拒绝。
+- 2D LiDAR 可直接输入学习策略并输出移动动作；加入图像与语言条件后才是 VLA 类导航。2D 扫描存在高度盲区，真机实验必须低速、封闭场地并保留人工接管。
+- 当前系统为 RDK OS 3.0.0；较新的 Model Zoo 推荐 RDK OS >= 3.5.0。升级需先克隆 SD 卡并用第二张卡验证，不能在当前可用 Yahboom 系统上直接滚动升级。

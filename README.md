@@ -10,6 +10,7 @@ RDK X5 主控（8 核 Cortex-A55 + BPU AI 加速），带 **MIPI 相机** 和 **
 > **专题实机指南**（离线可看）：
 > - WiFi 客户端切换：[`docs/rdk-x5-wifi-client-guide.html`](docs/rdk-x5-wifi-client-guide.html)
 > - MIPI 相机预览：[`docs/rdk-x5-mipi-camera-preview-guide.html`](docs/rdk-x5-mipi-camera-preview-guide.html)
+> - 官方实验取舍、进阶项目与 4090 端云推理路线：[`docs/rdk-x5-official-experiments-and-advanced-practice.html`](docs/rdk-x5-official-experiments-and-advanced-practice.html)
 
 ---
 
@@ -264,5 +265,7 @@ yahboom-rdk-x5/
 └── docs/
     ├── rdk-x5-system-report.html              # SSH 实采的系统体检报告（离线可看）
     ├── rdk-x5-wifi-client-guide.html          # WiFi 客户端切换实机指南
-    └── rdk-x5-mipi-camera-preview-guide.html  # MIPI 相机预览排障指南
+    ├── rdk-x5-mipi-camera-preview-guide.html  # MIPI 相机预览排障指南
+    └── rdk-x5-official-experiments-and-advanced-practice.html
+                                               # 官方实验取舍、进阶项目与 4090 端云推理路线
 ```

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RDK X5 Robot 官方实验取舍与进阶实践路线</title>
+<style>
+  :root {
+    --bg: #f5f7f8;
+    --paper: #ffffff;
+    --ink: #182026;
+    --muted: #5f6b73;
+    --line: #d8dee2;
+    --blue: #146c94;
+    --green: #26734d;
+    --orange: #a85516;
+    --red: #b42318;
+    --violet: #6b4f9b;
+    --soft-blue: #eaf4f8;
+    --soft-green: #eaf6ef;
+    --soft-orange: #fff3e8;
+    --soft-red: #fdeceb;
+    --soft-violet: #f2eef8;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC",
+      "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 22px 72px; }
+  header {
+    background: var(--paper);
+    border-top: 6px solid var(--blue);
+    border-bottom: 1px solid var(--line);
+    padding: 30px 32px 26px;
+  }
+  header h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.25; letter-spacing: 0; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+  main { background: var(--paper); padding: 4px 32px 38px; }
+  h2 {
+    margin: 38px 0 14px;
+    padding: 0 0 8px;
+    border-bottom: 2px solid var(--line);
+    font-size: 22px;
+    letter-spacing: 0;
+  }
+  h3 { margin: 25px 0 10px; font-size: 17px; letter-spacing: 0; }
+  p { margin: 9px 0; }
+  a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  code, pre { font-family: var(--mono); }
+  code { background: #edf1f3; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  pre {
+    margin: 12px 0;
+    padding: 13px 15px;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--blue);
+    background: #f7f9fa;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 13px 0 18px; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef2f4; font-weight: 650; }
+  tr:nth-child(even) td { background: #fbfcfc; }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+  .lead {
+    margin: 22px 0;
+    padding: 16px 18px;
+    background: var(--soft-green);
+    border-left: 5px solid var(--green);
+  }
+  .callout { margin: 14px 0; padding: 12px 15px; border-left: 4px solid var(--blue); background: var(--soft-blue); }
+  .callout.warn { border-left-color: var(--orange); background: var(--soft-orange); }
+  .callout.bad { border-left-color: var(--red); background: var(--soft-red); }
+  .callout.violet { border-left-color: var(--violet); background: var(--soft-violet); }
+  .tag {
+    display: inline-block;
+    margin-right: 5px;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .p0 { color: #fff; background: var(--red); }
+  .p1 { color: #fff; background: var(--orange); }
+  .p2 { color: #fff; background: var(--blue); }
+  .ok { color: var(--green); font-weight: 700; }
+  .warn { color: var(--orange); font-weight: 700; }
+  .bad { color: var(--red); font-weight: 700; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 15px 0; }
+  .card { border: 1px solid var(--line); border-top: 4px solid var(--blue); padding: 14px; background: var(--paper); }
+  .card.green { border-top-color: var(--green); }
+  .card.orange { border-top-color: var(--orange); }
+  .card h3 { margin: 0 0 7px; font-size: 16px; }
+  .card p { margin: 4px 0; font-size: 14px; }
+  .toc { columns: 2; margin: 12px 0; padding-left: 22px; }
+  .svgbox { margin: 16px 0; padding: 12px; border: 1px solid var(--line); background: #f9fbfb; overflow-x: auto; }
+  .checklist li { margin: 7px 0; }
+  details { margin: 10px 0; border: 1px solid var(--line); background: #fbfcfc; padding: 10px 12px; }
+  summary { cursor: pointer; color: var(--blue); font-weight: 650; }
+  footer { padding: 18px 32px; border-top: 1px solid var(--line); background: #eef2f4; color: var(--muted); font-size: 13px; }
+  @media (max-width: 760px) {
+    .wrap { padding: 0; }
+    header, main, footer { padding-left: 18px; padding-right: 18px; }
+    header h1 { font-size: 25px; }
+    .grid { grid-template-columns: 1fr; }
+    .toc { columns: 1; }
+    table { display: block; overflow-x: auto; white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>RDK X5 Robot 官方实验取舍与进阶实践路线</h1>
+  <p>基于 Yahboom RDK X5 ROBOT 实机、ROS 2 Humble、IMX219、ORADAR MS200 与 4090 工作站</p>
+  <p><strong>版本：</strong>2026-07-10　<strong>目标：</strong>从“跑通厂商例程”推进到“能开发、部署、测量和迭代机器人系统”</p>
+</header>
+
+<main>
+<div class="lead">
+  <strong>结论先行：</strong>这台车足够完成一条完整的移动机器人实践链：底盘控制、里程计与 TF、2D LiDAR SLAM、Nav2、单目视觉、BPU 小模型部署、ROS 2 多机通信、数据采集，以及 4090 远端策略推理。最合理的分工是：<strong>RDK X5 做设备接入、低延迟控制和安全监督，4090 做训练与大模型推理</strong>。LiDAR 可以直接输入学习策略并输出 <code>/cmd_vel</code>，但这首先是 LiDAR-to-Action；加入图像和语言条件后，才是 VLA 类导航系统。
+</div>
+
+<h2 id="contents">阅读导航</h2>
+<ol class="toc">
+  <li><a href="#boundary">实机能力与边界</a></li>
+  <li><a href="#official">官方实验怎么选</a></li>
+  <li><a href="#route">推荐完成顺序</a></li>
+  <li><a href="#projects">自行开发项目清单</a></li>
+  <li><a href="#architecture">RDK + 4090 架构</a></li>
+  <li><a href="#lidar-policy">LiDAR 直接出动作</a></li>
+  <li><a href="#vla">VLA 类实验路线</a></li>
+  <li><a href="#network">Wi-Fi ROS 2 工程要点</a></li>
+  <li><a href="#toolchain">BPU 部署与版本风险</a></li>
+  <li><a href="#acceptance">验收指标</a></li>
+</ol>
+
+<h2 id="boundary">一、实机能力与边界</h2>
+<table>
+  <tr><th>资源</th><th>实机已确认</th><th>适合做什么</th><th>边界</th></tr>
+  <tr><td>RDK X5</td><td>8 核 Cortex-A55、Bayes-e BPU、约 6.5 GiB 内存</td><td>ROS 2 节点、传感器预处理、经典导航、量化视觉模型</td><td>大 VLA 不应强塞到板端；GPU 也不是 CUDA GPU</td></tr>
+  <tr><td>单目相机</td><td>IMX219，CSI0，<code>/image_raw</code> 实测约 30 FPS</td><td>检测、分类、巡线、跟踪、语义感知、数据采集</td><td>没有真实深度；尺度估计和近场障碍仍应依赖 LiDAR</td></tr>
+  <tr><td>2D LiDAR</td><td>ORADAR MS200，<code>/dev/oradar</code>，ROS 2 发布 <code>/scan</code></td><td>避障、SLAM、定位、局部安全、学习策略输入</td><td>只看到一个水平扫描平面，无法直接看到桌面边缘、悬空物或低矮障碍</td></tr>
+  <tr><td>麦克纳姆底盘</td><td>串口 MCU，<code>/dev/myserial</code>，驱动订阅 <code>/cmd_vel</code></td><td>全向移动、轨迹控制、导航与动作策略</td><td>动作语义、速度上限、里程计话题必须先用 CLI 实测确认</td></tr>
+  <tr><td>4090 工作站</td><td>用户已有</td><td>仿真、RL/模仿学习、VLA 微调、大模型在线推理</td><td>Wi-Fi 延迟与断连不可进入最后安全闭环</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>当前缺失项：</strong>Yahboom 官方目录含“深度相机系列课程”，但本机资料只确认了 IMX219 单目相机。除非另购并完成驱动验证，否则 RTAB-Map 三维建图、RGB-D 物体定位等实验应标为<strong>暂不可做</strong>，不能拿单目相机冒充深度相机。
+</div>
+
+<h2 id="official">二、官方实验怎么选</h2>
+<p>官方目录很大，但不是每一章都值得平均投入。下面按“能否形成可复用工程能力”排序，而不是按网页顺序照抄。</p>
+
+<h3><span class="tag p0">P0 必做</span> 建立可观测、可复现的 ROS 2 机器人基线</h3>
+<table>
+  <tr><th>官方章节</th><th>值得做的实验</th><th>真正要学会</th><th>验收产物</th></tr>
+  <tr><td>06 开发环境</td><td>远程连接、多机通信、设备 ID、镜像备份</td><td>网络、设备名、工作空间与恢复手段</td><td>第二张可恢复 SD 卡；主机与车端互见 ROS graph</td></tr>
+  <tr><td>07 ROS 2 基础</td><td>节点、话题、服务、动作、自定义消息、参数、Launch</td><td>通信语义与包结构，不只是 CLI 命令</td><td>自行编写一个 C++ 或 Python 功能包并用 launch 启动</td></tr>
+  <tr><td>07 ROS 2 基础</td><td>DDS、分布式通信、TF2、rosbag2、RViz2、RQt</td><td>多机发现、QoS、坐标系、录制回放与诊断</td><td>完整记录 <code>/scan</code>、<code>/odom</code>、<code>/cmd_vel</code>、TF</td></tr>
+  <tr><td>08 底盘与控制</td><td>机器人信息发布、控制、状态估计、校准、轨迹跟踪、URDF</td><td><code>base_link</code>、<code>odom</code>、轮速闭环、几何参数</td><td>直线 2 m、原地 360° 与方形轨迹误差报告</td></tr>
+  <tr><td>09 激光雷达</td><td>雷达使用、gmapping、cartographer、导航与避障</td><td>scan 质量、TF、地图、定位、代价地图和控制器</td><td>同一场地两种 SLAM 对比；保存地图并重复导航 20 次</td></tr>
+</table>
+
+<h3><span class="tag p1">P1 高价值</span> 感知、边缘 AI 与安全行为</h3>
+<table>
+  <tr><th>官方章节</th><th>值得做的实验</th><th>建议改造</th><th>为什么值得</th></tr>
+  <tr><td>09 激光雷达</td><td>避障、跟踪、警卫、巡逻</td><td>把厂商脚本改成独立 ROS 2 节点，参数化阈值并补诊断话题</td><td>可练状态机、传感器分区、动作仲裁</td></tr>
+  <tr><td>11 MIPI 相机</td><td>驱动、颜色跟随、物体检测、深度学习巡线、人体跟踪</td><td>保留原始检测结果，输出标准消息，不让视觉节点直接写电机</td><td>形成“感知→目标→控制”的清晰接口</td></tr>
+  <tr><td>10 OpenCV</td><td>几何变换、图像处理、二维码识别</td><td>加帧率、端到端延迟和 CPU/BPU 占用统计</td><td>建立图像预处理、标定与性能意识</td></tr>
+  <tr><td>04 驱动板</td><td>串口、CAN、编码器、运动学、PID、FreeRTOS</td><td>至少读懂数据帧与控制周期；有精力再刷写固件</td><td>把 Linux/ROS 2 与 MCU 实时控制连起来</td></tr>
+  <tr><td>13 多车控制</td><td>多车同步控制</td><td>单车上先用 namespace 启两套仿真节点验证隔离</td><td>练 namespace、Domain ID、发现流量和命令归属</td></tr>
+</table>
+
+<h3><span class="tag p2">P2 选做</span> 低收益或需要额外硬件</h3>
+<table>
+  <tr><th>实验</th><th>处理建议</th><th>原因</th></tr>
+  <tr><td>APP 遥控、蜂鸣器、灯效、OLED</td><td>快速跑通即可</td><td>适合验证硬件，但对机器人系统能力提升有限</td></tr>
+  <tr><td>Gazebo 基础教程</td><td>只做 URDF、传感器、底盘和控制接口；之后转成自己的仿真模型</td><td>重点是 sim/real 接口一致，不是反复点教程</td></tr>
+  <tr><td>深度相机、RTAB-Map</td><td>另购兼容深度相机后再做</td><td>当前 IMX219 不提供真实深度</td></tr>
+  <tr><td>SBUS、舵机、RGB 灯带</td><td>有明确扩展需求再做</td><td>和当前移动机器人主线关系弱</td></tr>
+</table>
+
+<h2 id="route">三、推荐完成顺序</h2>
+<div class="grid">
+  <div class="card"><h3>阶段 1：设备基线</h3><p>备份镜像，盘点 topics、types、QoS、TF、频率和带宽。</p><p><strong>退出条件：</strong>重启后可一条 launch 拉起底盘、雷达和相机。</p></div>
+  <div class="card green"><h3>阶段 2：控制基线</h3><p>标定底盘，测直线、旋转、全向移动和里程计漂移。</p><p><strong>退出条件：</strong>有误差表，不靠“看起来差不多”。</p></div>
+  <div class="card orange"><h3>阶段 3：导航基线</h3><p>比较 gmapping/cartographer，再接 Nav2、碰撞监控和速度平滑。</p><p><strong>退出条件：</strong>固定任务重复 20 次可统计成功率。</p></div>
+  <div class="card green"><h3>阶段 4：边缘感知</h3><p>相机检测或分割部署到 BPU，输出标准 ROS 2 消息。</p><p><strong>退出条件：</strong>报告 FPS、P50/P95 延迟、温度和精度。</p></div>
+  <div class="card"><h3>阶段 5：端云协同</h3><p>Wi-Fi 发送压缩图像和 scan，4090 节点返回动作建议。</p><p><strong>退出条件：</strong>断网、超时、旧动作都能在车端停止。</p></div>
+  <div class="card orange"><h3>阶段 6：学习策略</h3><p>先 LiDAR-to-Action，再图像融合，最后加语言条件。</p><p><strong>退出条件：</strong>策略必须和 Nav2/规则基线同场对比。</p></div>
+</div>
+
+<h3>第一次接管前的接口盘点</h3>
+<pre><code># Run on the RDK X5 after starting the relevant drivers
+ros2 topic list -t
+ros2 topic info -v /scan
+ros2 topic info -v /image_raw
+ros2 topic info -v /cmd_vel
+ros2 topic hz /scan
+ros2 topic bw /image_raw
+ros2 topic echo --once /odom
+ros2 run tf2_tools view_frames
+ros2 doctor --report</code></pre>
+<p class="muted">如果 <code>/odom</code> 名称不同或不存在，以实机输出为准。不要先写一堆适配层掩盖接口没搞清楚的问题。</p>
+
+<h2 id="projects">四、可以自行开发并部署的程序</h2>
+<p>这些项目都能直接放进当前仓库，交叉覆盖嵌入式 Linux、ROS 2、感知、控制、数据和 AI 部署。</p>
+<table>
+  <tr><th>项目</th><th>部署位置</th><th>核心输入/输出</th><th>技术重点</th><th>优先级</th></tr>
+  <tr><td><strong>robot_bringup</strong>：统一启动与诊断</td><td>RDK</td><td>设备节点、ROS lifecycle、diagnostics</td><td>launch、参数、udev、systemd、故障恢复</td><td><span class="tag p0">P0</span></td></tr>
+  <tr><td><strong>cmd_vel_guard</strong>：速度安全监督器</td><td>RDK</td><td><code>/cmd_vel_proposed</code> + <code>/scan</code> → <code>/cmd_vel</code></td><td>超时停车、限速、限加速度、近场扇区急停、命令仲裁</td><td><span class="tag p0">P0</span></td></tr>
+  <tr><td><strong>dataset_recorder</strong>：触发式数据采集</td><td>RDK/工作站</td><td>图像、scan、odom、TF、手柄、cmd_vel</td><td>时间戳、episode、元数据、失败片段、rosbag2</td><td><span class="tag p0">P0</span></td></tr>
+  <tr><td><strong>nav2_bringup</strong>：标准导航基线</td><td>RDK</td><td>scan、odom、TF、goal → cmd_vel proposal</td><td>footprint、costmap、planner/controller、collision monitor</td><td><span class="tag p0">P0</span></td></tr>
+  <tr><td><strong>bpu_detector</strong>：板端目标检测</td><td>RDK BPU</td><td>image → detections/markers</td><td>ONNX、PTQ、NV12、后处理、ROS 2 component</td><td><span class="tag p1">P1</span></td></tr>
+  <tr><td><strong>semantic_follower</strong>：视觉目标跟随</td><td>RDK</td><td>目标框 + scan → cmd_vel proposal</td><td>目标状态机、丢失恢复、LiDAR 距离约束</td><td><span class="tag p1">P1</span></td></tr>
+  <tr><td><strong>remote_inference</strong>：4090 推理节点</td><td>RDK + 4090</td><td>compressed image/scan/state → action chunk</td><td>DDS QoS、序列号、时间戳、延迟预算、动作过期</td><td><span class="tag p1">P1</span></td></tr>
+  <tr><td><strong>lidar_policy</strong>：LiDAR 学习导航</td><td>训练在 4090；推理先在 4090</td><td>scan + goal + velocity → vx/vy/wz</td><td>行为克隆或 RL、仿真并行、域随机化、安全投影</td><td><span class="tag p1">P1</span></td></tr>
+  <tr><td><strong>language_nav</strong>：语言指令导航</td><td>4090 + RDK</td><td>文本 + 图像 + scan + map → goal/action</td><td>先“语言→语义目标→Nav2”，再试端到端动作</td><td><span class="tag p2">P2</span></td></tr>
+  <tr><td><strong>fleet_lab</strong>：多车/多命名空间实验</td><td>工作站 + RDK</td><td>namespaces、goals、telemetry</td><td>DDS discovery、隔离、调度、带宽</td><td><span class="tag p2">P2</span></td></tr>
+</table>
+
+<div class="callout">
+  <strong>建议仓库结构：</strong><code>src/rdk_x5_bringup</code>、<code>src/rdk_x5_safety</code>、<code>src/rdk_x5_dataset</code>、<code>src/rdk_x5_remote_inference</code>、<code>src/rdk_x5_msgs</code>。先把消息契约和安全监督固定下来，模型可以反复换，底盘接口不应跟着模型一起变。
+</div>
+
+<h2 id="architecture">五、RDK X5 + Wi-Fi + 4090 推荐架构</h2>
+<div class="svgbox">
+<svg viewBox="0 0 1040 520" width="100%" role="img" aria-labelledby="arch-title arch-desc" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,'PingFang SC',sans-serif;font-size:12px">
+  <title id="arch-title">RDK X5 与 4090 端云协同架构</title>
+  <desc id="arch-desc">RDK 采集相机、激光雷达和底盘状态，经 Wi-Fi 发送到 4090 推理节点。动作建议返回 RDK 后，必须经过本地安全监督器才能发往底盘 MCU。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#68757d"/></marker>
+    <marker id="green-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#26734d"/></marker>
+  </defs>
+  <rect x="20" y="20" width="590" height="465" rx="8" fill="#f7faf9" stroke="#26734d" stroke-width="2"/>
+  <text x="40" y="50" font-size="16" font-weight="700" fill="#26734d">RDK X5：设备、实时路径与安全边界</text>
+  <rect x="45" y="80" width="155" height="70" rx="6" fill="#eaf4f8" stroke="#146c94"/>
+  <text x="122" y="108" text-anchor="middle" font-weight="700">IMX219</text><text x="122" y="128" text-anchor="middle">/image_raw</text>
+  <rect x="225" y="80" width="155" height="70" rx="6" fill="#f2eef8" stroke="#6b4f9b"/>
+  <text x="302" y="108" text-anchor="middle" font-weight="700">ORADAR MS200</text><text x="302" y="128" text-anchor="middle">/scan</text>
+  <rect x="405" y="80" width="155" height="70" rx="6" fill="#fff3e8" stroke="#a85516"/>
+  <text x="482" y="108" text-anchor="middle" font-weight="700">底盘状态</text><text x="482" y="128" text-anchor="middle">odom / TF / velocity</text>
+  <line x1="122" y1="150" x2="230" y2="205" stroke="#68757d" marker-end="url(#arrow)"/>
+  <line x1="302" y1="150" x2="302" y2="205" stroke="#68757d" marker-end="url(#arrow)"/>
+  <line x1="482" y1="150" x2="375" y2="205" stroke="#68757d" marker-end="url(#arrow)"/>
+  <rect x="170" y="205" width="265" height="75" rx="6" fill="#eaf6ef" stroke="#26734d" stroke-width="2"/>
+  <text x="302" y="233" text-anchor="middle" font-weight="700">预处理与数据契约</text>
+  <text x="302" y="253" text-anchor="middle">压缩 / 降采样 / 时间戳 / sequence_id</text>
+  <text x="302" y="270" text-anchor="middle">本地 rosbag2 可并行记录</text>
+  <rect x="685" y="20" width="335" height="300" rx="8" fill="#f8f6fb" stroke="#6b4f9b" stroke-width="2"/>
+  <text x="705" y="50" font-size="16" font-weight="700" fill="#6b4f9b">4090 工作站：训练与大模型推理</text>
+  <rect x="720" y="82" width="265" height="72" rx="6" fill="#f2eef8" stroke="#6b4f9b"/>
+  <text x="852" y="110" text-anchor="middle" font-weight="700">ROS 2 inference_node</text>
+  <text x="852" y="130" text-anchor="middle">policy / VLM / VLA / TensorRT / PyTorch</text>
+  <rect x="720" y="185" width="265" height="90" rx="6" fill="#eaf4f8" stroke="#146c94"/>
+  <text x="852" y="213" text-anchor="middle" font-weight="700">训练与评估</text>
+  <text x="852" y="233" text-anchor="middle">Isaac Lab / Gazebo / LeRobot / rosbag</text>
+  <text x="852" y="252" text-anchor="middle">checkpoint + metrics + dataset version</text>
+  <line x1="435" y1="235" x2="720" y2="118" stroke="#146c94" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="565" y="153" text-anchor="middle" fill="#146c94">Wi-Fi：压缩观测</text>
+  <line x1="720" y1="142" x2="448" y2="330" stroke="#6b4f9b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="610" y="255" text-anchor="middle" fill="#6b4f9b">动作建议 + 时间戳</text>
+  <rect x="155" y="325" width="310" height="82" rx="6" fill="#fdeceb" stroke="#b42318" stroke-width="2"/>
+  <text x="310" y="351" text-anchor="middle" font-weight="700" fill="#b42318">本地安全监督器（不可远端化）</text>
+  <text x="310" y="372" text-anchor="middle">watchdog / scan stop zone / clamp / accel limit</text>
+  <text x="310" y="391" text-anchor="middle">过期、断网、NaN、越界 → 零速度</text>
+  <line x1="302" y1="280" x2="302" y2="325" stroke="#26734d" stroke-width="2" marker-end="url(#green-arrow)"/>
+  <rect x="205" y="435" width="210" height="48" rx="6" fill="#fff3e8" stroke="#a85516"/>
+  <text x="310" y="464" text-anchor="middle" font-weight="700">底盘 MCU / 电机闭环</text>
+  <line x1="310" y1="407" x2="310" y2="435" stroke="#26734d" stroke-width="2" marker-end="url(#green-arrow)"/>
+  <rect x="685" y="350" width="335" height="135" rx="8" fill="#fff3e8" stroke="#a85516"/>
+  <text x="705" y="380" font-size="15" font-weight="700" fill="#a85516">设计铁律</text>
+  <text x="705" y="408">1. 4090 只给 proposal，不直接控制串口。</text>
+  <text x="705" y="432">2. 最新观测和动作必须带时间戳与序列号。</text>
+  <text x="705" y="456">3. Wi-Fi 消失时，RDK 独立完成停车。</text>
+</svg>
+</div>
+
+<h3>建议消息流</h3>
+<table>
+  <tr><th>方向</th><th>Topic 示例</th><th>QoS 起点</th><th>说明</th></tr>
+  <tr><td>RDK → 4090</td><td><code>/remote/scan</code></td><td>Best Effort / Keep Last 1</td><td>只要最新帧，积压旧 scan 没价值</td></tr>
+  <tr><td>RDK → 4090</td><td><code>/remote/image/compressed</code></td><td>Best Effort / Keep Last 1</td><td>先用 640×480 或 640×360，测带宽后再加</td></tr>
+  <tr><td>RDK → 4090</td><td><code>/remote/robot_state</code></td><td>Best Effort / Keep Last 1</td><td>速度、目标相对位姿、模式、时间戳</td></tr>
+  <tr><td>4090 → RDK</td><td><code>/cmd_vel_proposed</code></td><td>Reliable / Keep Last 1</td><td>消息内含源观测时间、序列号、有效期和模型版本</td></tr>
+  <tr><td>RDK 内部</td><td><code>/cmd_vel</code></td><td>Reliable / Keep Last 1</td><td>只能由安全监督器或明确的 mux 输出</td></tr>
+</table>
+
+<h2 id="lidar-policy">六、LiDAR 能否直接输入并输出动作</h2>
+<p><strong class="ok">可以。</strong>当前雷达已经通过 ROS 2 发布 <code>sensor_msgs/LaserScan</code>，底盘通过 <code>geometry_msgs/Twist</code> 类命令控制，因此数据与执行接口都具备。真正的问题不是“能不能接”，而是怎样训练、怎样定义任务，以及怎样防止模型把车撞坏。</p>
+
+<table>
+  <tr><th>层级</th><th>输入</th><th>输出</th><th>推荐算法</th><th>定位</th></tr>
+  <tr><td>L0 规则基线</td><td>scan 扇区最小距离</td><td>停车/转向</td><td>阈值、VFH 类方法</td><td>安全基线，必须先有</td></tr>
+  <tr><td>L1 经典导航</td><td>scan + odom + map + goal</td><td>vx/vy/wz</td><td>Nav2 planner/controller</td><td>老师策略与比较基线</td></tr>
+  <tr><td>L2 LiDAR-to-Action</td><td>归一化 scan + goal 极坐标 + 当前速度</td><td>单步或短 action chunk</td><td>行为克隆、PPO、SAC、TD-MPC</td><td>学习控制策略，不是 VLA</td></tr>
+  <tr><td>L3 多模态导航</td><td>scan + RGB + goal/state</td><td>action chunk</td><td>多编码器融合、Transformer policy</td><td>视觉语义加几何安全</td></tr>
+  <tr><td>L4 VLA 类导航</td><td>语言 + RGB + scan/state</td><td>目标点、技能或 action chunk</td><td>VLM/VLA adapter 或分层策略</td><td>语言条件机器人策略</td></tr>
+</table>
+
+<div class="callout">
+  <strong>LeRobot 可以用，但需要适配：</strong>可以给这台车实现自定义 <code>Robot</code> 接口，把 ROS 2 观测映射到 <code>get_observation()</code>，把策略动作映射到 <code>send_action()</code>。不过 LiDAR 不是多数现成 VLA 的标准输入，仍需自定义 feature、processor 或 policy adapter；不能因为框架能接自定义机器人，就假定预训练权重已经理解 <code>LaserScan</code>。
+</div>
+
+<h3>最小可行的学习策略</h3>
+<pre><code>observation = {
+  "lidar": float32[N],          # clipped, normalized, fixed angular order
+  "goal":  float32[2],          # distance, bearing in base_link
+  "velocity": float32[3]        # vx, vy, wz
+}
+action = float32[3]              # normalized vx, vy, wz proposal</code></pre>
+<ul>
+  <li>先把 <code>inf</code>、<code>nan</code>、越界值和雷达盲区处理规则固定；训练和实机必须完全一致。</li>
+  <li>scan 长度固定。不同驱动分辨率不要靠运行时静默截断，应该显式重采样并记录配置。</li>
+  <li>行为克隆可用 Nav2 或人工遥控做 teacher；RL 先在仿真并行训练，再做少量真机微调。</li>
+  <li>麦克纳姆动作是三维 <code>vx/vy/wz</code>，但第一版可以先锁住 <code>vy=0</code>，降低探索空间；稳定后再开放全向移动。</li>
+  <li>模型输出永远是 proposal。安全监督器按距离、速度、延迟和加速度重新裁剪。</li>
+</ul>
+
+<div class="callout bad">
+  <strong>2D LiDAR 的硬限制：</strong>模型看不到扫描平面之外的物体。桌沿、楼梯、透明物、悬空物和过低障碍都可能漏检。真机学习实验只应在封闭平地、低速、有人看护且电源开关可立即触达的条件下进行；后续可补前向深度相机、ToF 或防跌落传感器。
+</div>
+
+<h2 id="vla">七、4090 上的 VLA 类实验路线</h2>
+<p>不要第一天就微调一个大 VLA 让它直接发速度。最实用的路线是逐层增加不确定性，每一层都有上层基线可回退和比较。</p>
+<ol class="checklist">
+  <li><strong>数据契约：</strong>把图像、scan、odom/TF、目标、人工动作和模式记录成 episode；先用 rosbag2，后续再转换成 LeRobot 或自定义序列数据集。</li>
+  <li><strong>LiDAR teacher-student：</strong>Nav2 或人工遥控生成动作，训练小型 MLP/1D CNN/Transformer 模仿策略。4090 训练，先远端推理。</li>
+  <li><strong>仿真 RL：</strong>在 Gazebo 或 Isaac Lab 中建立麦克纳姆底盘和 2D LiDAR，做碰撞惩罚、到达奖励、速度平滑奖励与域随机化。</li>
+  <li><strong>视觉融合：</strong>加入下采样 RGB 特征，用 LiDAR 负责几何、RGB 负责语义；先预测局部目标或轨迹，再考虑直接动作。</li>
+  <li><strong>语言分层方案：</strong>语言/图像模型识别“去蓝色椅子旁边”，输出语义目标或地图坐标，Nav2 执行。这比端到端速度更容易验证，也更安全。</li>
+  <li><strong>VLA action chunk：</strong>数据和基线成熟后，再训练“语言 + RGB + scan/state → 未来 K 步动作”。每次只执行 chunk 前几步并滚动重规划。</li>
+</ol>
+
+<table>
+  <tr><th>路线</th><th>4090 可行性</th><th>板端部署</th><th>建议</th></tr>
+  <tr><td>小型 LiDAR policy</td><td class="ok">很适合</td><td>可继续尝试 ONNX/PTQ/BPU</td><td>第一项学习控制实验</td></tr>
+  <tr><td>ACT/Diffusion 类模仿策略</td><td class="ok">可训练</td><td>先远端；是否能量化取决于算子和规模</td><td>先做固定任务和短 action chunk</td></tr>
+  <tr><td>SmolVLA/π0/GR00T 等现成 VLA</td><td class="warn">视模型与显存配置而定</td><td class="bad">不适合直接放 RDK X5</td><td>这些模型通常面向图像、语言和机械臂状态；LiDAR 需要自定义 adapter/processor</td></tr>
+  <tr><td>语言→语义目标→Nav2</td><td class="ok">非常适合</td><td>VLM 在 4090，导航在 RDK</td><td>最先落地的“语言控制移动机器人”</td></tr>
+</table>
+
+<h3>建议采集的最小 episode</h3>
+<pre><code>ros2 bag record -o episode_0001 \
+  /scan /image_raw /odom /tf /tf_static \
+  /cmd_vel /cmd_vel_proposed /joy /goal_pose</code></pre>
+<p>实际话题名以实机为准。每个 episode 还应保存：任务文本、场地、地图版本、软件 commit、传感器配置、是否成功、失败原因、人工接管时刻。只存张量不存上下文，后面一定无法解释数据。</p>
+
+<h2 id="network">八、Wi-Fi ROS 2 推理节点要点</h2>
+<div class="callout violet">
+  <strong>带宽判断：</strong>1080p NV12 原始图像约为 <code>1920×1080×1.5×30 ≈ 93 MB/s</code>，还没算 DDS 开销，不能把它当普通 Wi-Fi topic 随便发。2D scan 通常只有几十 KB/s。第一版应发压缩、降分辨率图像，LiDAR 则可以直接发。
+</div>
+<p>4090 主机最好使用原生 Ubuntu 22.04 + ROS 2 Humble，或使用能够暴露宿主网络的 Linux 容器。Windows/WSL 也可能做通，但虚拟网卡、multicast 和防火墙会额外增加 DDS 排障成本，不应作为第一版端云链路。</p>
+<table>
+  <tr><th>问题</th><th>工程处理</th><th>验证方式</th></tr>
+  <tr><td>节点互相发现</td><td>两端统一 <code>ROS_DOMAIN_ID=99</code>、RMW 和网络接口；先测 multicast</td><td><code>ros2 multicast receive/send</code></td></tr>
+  <tr><td>Wi-Fi multicast 不稳定</td><td>再引入 Fast DDS Discovery Server；不要一开始就堆网络层</td><td>重复重启两端，记录发现耗时和丢失次数</td></tr>
+  <tr><td>图像拥塞</td><td>压缩、降采样、depth 1、Best Effort；不排队处理旧帧</td><td><code>ros2 topic bw</code> 与端到端时间戳</td></tr>
+  <tr><td>时间不同步</td><td>两机使用 chrony/NTP；消息保留传感器采样时间</td><td>记录 source stamp、receive stamp、finish stamp</td></tr>
+  <tr><td>动作过期</td><td>动作带 <code>source_seq</code> 和 <code>valid_until</code>；RDK 拒绝旧动作</td><td>人为加入 100/300/1000 ms 延迟测试</td></tr>
+  <tr><td>推理节点崩溃</td><td>RDK watchdog 超时输出零速度；恢复后需显式重新 armed</td><td>kill 推理进程、断 Wi-Fi、拔网线</td></tr>
+  <tr><td>QoS 不兼容</td><td>发布/订阅双方显式配置并检查</td><td><code>ros2 topic info -v</code></td></tr>
+</table>
+
+<p>动作链建议从 10 Hz 开始，测出 P95 延迟后再提高。控制周期不是越快越好：远端 30 Hz 但每隔几秒卡 500 ms，比稳定的 10 Hz 更危险。车端安全监督器可以 30–50 Hz 独立运行，并始终读取最新 scan。</p>
+
+<h2 id="toolchain">九、BPU 部署与版本风险</h2>
+<p>RDK X5 官方规格是 10 TOPS BPU，适合检测、分类、分割和较小策略网络。官方工具链以 ONNX 模型、PTQ/量化和板端 runtime 为核心；但当前实机是 <strong>RDK OS 3.0.0</strong>，而当前 RDK Model Zoo 的主分支建议 <strong>RDK OS ≥ 3.5.0</strong>，推理接口也已演进到 <code>hbm_runtime</code>。</p>
+
+<div class="callout bad">
+  <strong>不要在现有可用系统上直接滚动升级。</strong>Yahboom 的相机、底盘、tros 工作空间和自启动程序可能依赖旧镜像。正确做法是先克隆 SD 卡，再用第二张卡验证新 RDK OS；模型转换工具链、BPU 驱动和 <code>libdnn</code>/<code>hbm_runtime</code> 必须版本匹配。
+</div>
+
+<table>
+  <tr><th>部署目标</th><th>推荐路径</th><th>关键验证</th></tr>
+  <tr><td>官方检测模型</td><td>先在当前系统复现与其版本匹配的 legacy 示例</td><td>模型能加载、输入 NV12 正确、后处理一致</td></tr>
+  <tr><td>自训视觉模型</td><td>PyTorch → ONNX → 校准集 → PTQ → BPU 模型</td><td>浮点/量化逐层或最终精度对比，真实场景校准集</td></tr>
+  <tr><td>小型 LiDAR policy</td><td>先 ONNX Runtime/CPU 验证，再评估是否满足 BPU 固定 4D 输入和算子要求</td><td>输入 reshape 不改变角度语义；输出与 PyTorch 对齐</td></tr>
+  <tr><td>大 VLA</td><td>4090 推理，ROS 2 返回动作建议</td><td>显存、吞吐、P95 延迟、断连行为</td></tr>
+</table>
+
+<p>本机根分区实测已使用约 82%，剩余空间不适合长期存图像数据集。rosbag 应写入外接 SSD、NAS 或通过网络落到工作站，并设置按时长/大小切包和清理策略。</p>
+
+<h2 id="acceptance">十、每个实验都要有的验收指标</h2>
+<table>
+  <tr><th>维度</th><th>最低记录项</th><th>建议通过线</th></tr>
+  <tr><td>ROS 2 通信</td><td>频率、带宽、QoS、丢帧、发现时间</td><td>重启 10 次均能自动恢复；无无限积压</td></tr>
+  <tr><td>远端推理</td><td>采样→接收→推理→动作到达的 P50/P95/P99</td><td>P95 小于动作有效期，超时必停车</td></tr>
+  <tr><td>底盘控制</td><td>直线、旋转、方形轨迹误差；速度与加速度</td><td>形成可重复表格，再根据任务定阈值</td></tr>
+  <tr><td>SLAM/导航</td><td>地图闭环、定位恢复、到达率、碰撞/人工接管</td><td>固定 5 个目标点，至少 20 次统计</td></tr>
+  <tr><td>感知</td><td>FPS、P95 延迟、温度、误检/漏检、光照条件</td><td>板端持续运行 30 分钟无泄漏或降频失控</td></tr>
+  <tr><td>学习策略</td><td>成功率、碰撞率、路径效率、平滑度、域外失败</td><td>与规则和 Nav2 同场比较，不能只挑成功视频</td></tr>
+  <tr><td>安全</td><td>断 Wi-Fi、kill 节点、旧动作、NaN、雷达掉线</td><td>任何单点故障都不能让上一条非零速度持续执行</td></tr>
+</table>
+
+<h3>建议的前三个落地项目</h3>
+<ol>
+  <li><strong><code>cmd_vel_guard</code></strong>：先把所有动作源统一接到 <code>/cmd_vel_proposed</code>，本地监督后才发布 <code>/cmd_vel</code>。</li>
+  <li><strong><code>dataset_recorder</code></strong>：建立可回放、可标注、带任务元数据的 episode 数据。</li>
+  <li><strong><code>remote_inference</code></strong>：先用一个非常小的 LiDAR 规则/MLP 节点打通 RDK→4090→RDK，再替换为更复杂模型。</li>
+</ol>
+
+<details>
+  <summary>为什么不把“直接训练 VLA”排第一</summary>
+  <p>因为目前最缺的不是模型，而是稳定的数据契约、底盘标定、时间同步、网络延迟测量和本地安全监督。没有这些，训练结果差时无法判断是数据、模型、控制还是通信造成的；结果好时也无法复现。先把最简单的 LiDAR 策略跑通，随后加图像和语言只是扩展输入，不需要推翻整个执行链。</p>
+</details>
+
+<h2 id="sources">参考资料</h2>
+<ul>
+  <li><a href="https://www.yahboom.com/study/RDK-X5-ROBOT">Yahboom：RDK X5 ROBOT 官方课程目录</a></li>
+  <li><a href="https://developer.d-robotics.cc/en/rdkx5">D-Robotics：RDK X5 产品规格</a></li>
+  <li><a href="https://developer.d-robotics.cc/rdk_doc/en/Quick_start/hardware_introduction/rdk_x5/">D-Robotics：RDK X5 硬件接口</a></li>
+  <li><a href="https://github.com/D-Robotics/rdk_model_zoo">D-Robotics：RDK Model Zoo</a></li>
+  <li><a href="https://developer.d-robotics.cc/rdk_x_doc/Advanced_development/toolchain_development/overview">D-Robotics：算法工具链与量化概览</a></li>
+  <li><a href="https://docs.ros.org/en/humble/Concepts/Intermediate/About-Quality-of-Service-Settings.html">ROS 2 Humble：QoS 设置</a></li>
+  <li><a href="https://docs.ros.org/en/humble/Tutorials/Advanced/Discovery-Server/Discovery-Server.html">ROS 2 Humble：Fast DDS Discovery Server</a></li>
+  <li><a href="https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Recording-And-Playing-Back-Data/Recording-And-Playing-Back-Data.html">ROS 2 Humble：rosbag2 录制与回放</a></li>
+  <li><a href="https://docs.nav2.org/setup_guides/index.html">Nav2：首次机器人接入指南</a></li>
+  <li><a href="https://isaac-sim.github.io/IsaacLab/main/index.html">NVIDIA Isaac Lab：机器人学习框架</a></li>
+  <li><a href="https://github.com/huggingface/lerobot">Hugging Face LeRobot：自定义机器人、数据与策略接口</a></li>
+</ul>
+</main>
+
+<footer>
+  本文依据仓库 README 中的实机采集结果与 2026-07-10 可访问的官方资料整理。涉及话题名、QoS、底盘速度范围和系统兼容性的内容，最终以当前实机命令输出为准。
+</footer>
+</div>
+</body>
+</html>
