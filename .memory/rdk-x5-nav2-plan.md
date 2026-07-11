@@ -25,6 +25,9 @@ metadata:
 5. 手柄"没反应"大概率是亚博 `yahboom_joy` 的使能锁：`Joy_active` 开机复位 False，
    按 SELECT/BACK（buttons[6]/[4]）切换后才发 cmd_vel。
 6. 欠压先查 `/voltage`：2S 18650，≈7.6 V 扩展板持续蜂鸣+限电机，表现酷似"遥控坏了"。
+   且欠压会让扩展板 I2C 总线大面积报 errno 121，把教训 1 的驱动崩溃从"偶发"变成
+   "每 10-20 s 一次的崩溃循环"（2026-07-11 7.5 V 实测）——此时软件链路查什么都"正常"，
+   唯一正确动作是充电。诊断口诀：指令峰值(cmd_vel_joy)对比实际峰值(/odom twist)。
 
 下一步候选：遥控建全屋图（Task4）、TEB 换 DWB（麦轮横移）、collision_monitor、
 手机网页摇杆发 `/cmd_vel_joy`（走同一 mux）。远期路线见

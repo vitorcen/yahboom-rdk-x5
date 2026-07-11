@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RDK X5 控制台 GUI 架构 / GUI Architecture</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:1000px; padding:24px 16px 64px; background:#0b0e14;
+         color:#cdd6f4; font:14px/1.7 system-ui,sans-serif; }
+  h1 { font-size:20px; } h2 { font-size:16px; margin-top:36px; color:#7ea6e0; }
+  h1 small, h2 small { color:#5d6485; font-weight:400; font-size:.8em; margin-left:8px; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 5px;
+         font:12px ui-monospace,Consolas,monospace; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:13px; }
+  th, td { border:1px solid #262b3d; padding:6px 10px; text-align:left; vertical-align:top; }
+  th { background:#161a26; color:#7ea6e0; }
+  .dim { color:#8b93b5; }
+  .note { background:#161a26; border-left:3px solid #f9e2af; padding:10px 14px;
+          border-radius:0 6px 6px 0; margin:14px 0; }
+  svg { width:100%; height:auto; margin:12px 0; }
+</style>
+</head>
+<body>
+
+<h1>RDK X5 控制台 GUI 架构 <small>Tauri GUI Architecture</small></h1>
+<p>
+<code>gui/</code> 是一个 Tauri 2 桌面应用：前端为零依赖单文件
+<code>gui/ui/index.html</code>（编译时嵌入二进制），后端是一层很薄的 Rust
+（3 个 async command，全部是 ssh 包装）。它与小车之间<b>只有两条通信通道</b>：
+<b>rosbridge WebSocket（ws://192.168.3.187:9090）</b>承载所有实时数据与控制指令，
+<b>SSH（192.168.3.187:22，免密公钥）</b>承载日志与服务状态查询。没有第三条。
+<br><span class="dim">Two channels only: rosbridge WebSocket (:9090) for all realtime
+data & control; SSH (:22) for logs & service status.</span>
+</p>
+
+<h2>1. 每个界面元素走什么协议、哪个端口 <small>UI element → URI / port</small></h2>
+<table>
+<tr><th>界面元素</th><th>协议 / URI / 端口</th><th>话题或命令</th><th>方向</th></tr>
+<tr><td>雷达视图（极坐标）</td><td rowspan="7"><code>ws://192.168.3.187:9090</code><br>rosbridge v2 JSON</td>
+    <td><code>/scan</code> (sensor_msgs/LaserScan, 10 Hz)</td><td>订阅 ←</td></tr>
+<tr><td>地图视图（栅格+位姿+路径）</td>
+    <td><code>/map</code> (OccupancyGrid, 限流 1 s) + <code>/tf</code> <code>/tf_static</code> + <code>/plan</code></td><td>订阅 ←</td></tr>
+<tr><td>相机小窗（可拖动/等比拉伸）</td>
+    <td><code>/image_jpeg</code> (CompressedImage, 限流 66 ms ≈ 15 fps, 板端硬编码 JPEG ≈46 KB/帧)</td><td>订阅 ←</td></tr>
+<tr><td>电量胶囊 🔋</td><td><code>/voltage</code> (Float32, 限流 5 s；2S 电池 8.4 V 满 / ≈7.6 V 蜂鸣)</td><td>订阅 ←</td></tr>
+<tr><td>拖线设导航目标</td><td><code>/goal_pose</code> (PoseStamped, frame=map)</td><td>发布 →</td></tr>
+<tr><td>■ 终止按钮</td><td>service <code>/navigate_to_pose/_action/cancel_goal</code>（零 uuid=全取消）+ 连发 5 帧零速 <code>/cmd_vel</code></td><td>调用/发布 →</td></tr>
+<tr><td>日志页 /rosout 实时流</td><td><code>/rosout</code> (rcl_interfaces/Log，全节点汇聚)</td><td>订阅 ←</td></tr>
+<tr><td>日志页 systemd 日志 / dmesg</td><td rowspan="3"><code>ssh root@192.168.3.187</code>（22 端口，免密公钥，Tauri Rust 后端执行）</td>
+    <td><code>journalctl -u &lt;服务&gt;</code> / <code>dmesg</code>（服务名白名单，防注入）</td><td>拉取 ←</td></tr>
+<tr><td>侧栏服务状态点 ●</td><td><code>systemctl is-active</code> ×6 服务</td><td>拉取 ←</td></tr>
+<tr><td>侧栏板子状态（uptime/内存）</td><td><code>uptime</code> + <code>free -m</code></td><td>拉取 ←</td></tr>
+<tr><td>顶栏「连接」按钮</td><td colspan="2">重建到 <code>ws://…:9090</code> 的 WebSocket；断线每 3 s 自动重连</td><td>—</td></tr>
+</table>
+
+<div class="note">
+⚠️ <b>地图模式下画布上任何"按下-拖动-松开"都会真实发布 /goal_pose，车会动。</b>
+误触后立即点 ■ 终止。Nav2 的终止走的是 action cancel 服务，不是杀进程；
+零速帧则兜底刹住底盘（经 cmd_vel_mux 仲裁）。
+</div>
+
+<h2>2. /scan、/map 这些话题是谁提供的 <small>Topic providers (systemd services)</small></h2>
+<p>板端 5 个自研 systemd 服务开机自启（+1 个厂商 cam-service），每个话题的提供者：</p>
+<table>
+<tr><th>话题/能力</th><th>提供节点</th><th>所属 systemd 服务</th><th>底层来源</th></tr>
+<tr><td><code>/scan</code></td><td>oradar_scan (MS200)</td><td><code>ms200-lidar</code></td>
+    <td>串口 <code>/dev/oradar→ttyACM*</code> 230400（USB 重枚举会假活，见 §4）</td></tr>
+<tr><td><code>/map</code>（导航时）</td><td>map_server</td><td rowspan="3"><code>nav2</code></td>
+    <td>加载已存地图 <code>room.yaml</code></td></tr>
+<tr><td><code>map→odom</code> TF（定位）</td><td>AMCL</td><td>粒子滤波配准 /scan（需初始位姿种子）</td></tr>
+<tr><td><code>/plan</code>、导航执行</td><td>planner/controller/bt_navigator</td><td>DWB 控制器，调优参数 <code>nav_params_tuned.yaml</code></td></tr>
+<tr><td><code>/odom</code>、<code>odom→base</code> TF、<code>/voltage</code>、底盘执行</td><td>Mcnamu_driver + EKF</td><td rowspan="2"><code>nav-bringup</code></td>
+    <td>MCU 串口 <code>/dev/myserial</code> 115200；驱动带 respawn</td></tr>
+<tr><td><code>/cmd_vel</code> 仲裁（手柄&gt;导航）+ 失联 10 Hz 零速看门狗</td><td>cmd_vel_mux（自研）</td>
+    <td>手柄 <code>/cmd_vel_joy</code> 优先抢占 0.5 s</td></tr>
+<tr><td><code>/image_jpeg</code> <code>/image_raw</code></td><td>mipi_cam + hobot_codec</td><td><code>mipi-cam</code></td>
+    <td>IMX219 CSI0，依赖 cam-service 的 ISP <code>/dev/isc</code>（ExecStartPre 轮询等待）</td></tr>
+<tr><td>DDS ⇄ WebSocket 桥</td><td>rosbridge_websocket</td><td><code>rosbridge</code></td><td>监听 0.0.0.0:9090</td></tr>
+<tr><td>ISP/VSE 中间件</td><td>—</td><td><code>cam-service</code>（厂商）</td><td>相机链路的前置依赖</td></tr>
+</table>
+<p class="dim">建图期（非常态）：cartographer 临时提供 /map 增量更新，此时 nav2 的 map_server 不跑。</p>
+
+<h2>3. 总体框图 <small>Data-flow diagram</small></h2>
+<svg viewBox="0 0 960 560" role="img" aria-label="GUI 数据链路框图">
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#6c7bd0"/></marker>
+    <marker id="g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#7ee2a8"/></marker>
+    <marker id="y" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#f9e2af"/></marker>
+  </defs>
+  <style>
+    .box{fill:#161a26;stroke:#31344b} .hl{fill:#1e2436;stroke:#2b5c8a}
+    .t{fill:#cdd6f4;font:13px system-ui;text-anchor:middle}
+    .s{fill:#8b93b5;font:11px system-ui;text-anchor:middle}
+    .lbl{fill:#7ea6e0;font:11px system-ui;text-anchor:middle}
+    .fl{stroke:#6c7bd0;stroke-width:1.6;marker-end:url(#a);fill:none}
+    .bk{stroke:#7ee2a8;stroke-width:1.6;marker-end:url(#g);fill:none;stroke-dasharray:6 4}
+    .sh{stroke:#f9e2af;stroke-width:1.6;marker-end:url(#y);fill:none;stroke-dasharray:2 3}
+    .zone{fill:none;stroke:#31344b;stroke-dasharray:5 4}
+    .zt{fill:#5d6485;font:11px system-ui}
+  </style>
+
+  <rect class="zone" x="8" y="28" width="580" height="520"/>
+  <text class="zt" x="18" y="20">RDK X5 板端 192.168.3.187（全部 systemd 自启）</text>
+  <rect class="zone" x="640" y="28" width="312" height="520"/>
+  <text class="zt" x="650" y="20">本机 Tauri GUI（rdk-x5-console）</text>
+
+  <!-- sensors column -->
+  <rect class="box" x="22" y="56" width="118" height="50" rx="8"/>
+  <text class="t" x="81" y="77">MS200 雷达</text><text class="s" x="81" y="94">ttyACM* 230400</text>
+  <rect class="box" x="22" y="130" width="118" height="50" rx="8"/>
+  <text class="t" x="81" y="151">IMX219 相机</text><text class="s" x="81" y="168">CSI0 (需 cam-service)</text>
+  <rect class="box" x="22" y="204" width="118" height="50" rx="8"/>
+  <text class="t" x="81" y="225">底盘 MCU</text><text class="s" x="81" y="242">ttyUSB0 115200</text>
+  <rect class="box" x="22" y="292" width="118" height="50" rx="8"/>
+  <text class="t" x="81" y="313">手柄</text><text class="s" x="81" y="330">joy_node</text>
+
+  <!-- driver services column -->
+  <rect class="box" x="196" y="56" width="150" height="50" rx="8"/>
+  <text class="t" x="271" y="74">ms200-lidar 服务</text><text class="s" x="271" y="92">oradar_scan → /scan</text>
+  <rect class="box" x="196" y="130" width="150" height="50" rx="8"/>
+  <text class="t" x="271" y="148">mipi-cam 服务</text><text class="s" x="271" y="166">hobot_codec → /image_jpeg</text>
+  <rect class="box" x="196" y="204" width="150" height="64" rx="8"/>
+  <text class="t" x="271" y="224">nav-bringup 服务</text>
+  <text class="s" x="271" y="240">Mcnamu_driver+EKF</text>
+  <text class="s" x="271" y="256">/odom /voltage TF</text>
+  <rect class="hl" x="196" y="292" width="150" height="56" rx="8"/>
+  <text class="t" x="271" y="313">cmd_vel_mux</text>
+  <text class="s" x="271" y="331">手柄优先 + 零速看门狗</text>
+
+  <!-- nav2 -->
+  <rect class="box" x="400" y="56" width="160" height="150" rx="8"/>
+  <text class="t" x="480" y="80">nav2 服务</text>
+  <text class="s" x="480" y="100">map_server → /map</text>
+  <text class="s" x="480" y="118">AMCL → map→odom TF</text>
+  <text class="s" x="480" y="136">planner/DWB → /plan</text>
+  <text class="s" x="480" y="154">bt_navigator</text>
+  <text class="s" x="480" y="176">← /goal_pose</text>
+  <text class="s" x="480" y="192">← cancel_goal 服务</text>
+
+  <!-- rosbridge -->
+  <rect class="hl" x="400" y="380" width="160" height="64" rx="8"/>
+  <text class="t" x="480" y="406">rosbridge 服务</text>
+  <text class="s" x="480" y="424">DDS ⇄ WS/JSON :9090</text>
+
+  <!-- sshd -->
+  <rect class="box" x="400" y="472" width="160" height="52" rx="8"/>
+  <text class="t" x="480" y="494">sshd :22</text>
+  <text class="s" x="480" y="510">journalctl / systemctl / dmesg</text>
+
+  <!-- GUI side -->
+  <rect class="hl" x="660" y="360" width="272" height="104" rx="8"/>
+  <text class="t" x="796" y="384">前端 WebView（单文件 JS+Canvas）</text>
+  <text class="s" x="796" y="404">仪表盘：/scan /map /tf /plan 渲染</text>
+  <text class="s" x="796" y="420">相机窗 /image_jpeg · 电量 /voltage</text>
+  <text class="s" x="796" y="440">拖线→/goal_pose · 终止→cancel+零速</text>
+  <rect class="box" x="660" y="480" width="272" height="52" rx="8"/>
+  <text class="t" x="796" y="500">Rust 后端（3 个 async 命令）</text>
+  <text class="s" x="796" y="518">journal / service_status / board_info</text>
+
+  <!-- flows: sensors -> drivers -->
+  <line class="fl" x1="140" y1="81"  x2="196" y2="81"/>
+  <line class="fl" x1="140" y1="155" x2="196" y2="155"/>
+  <line class="fl" x1="140" y1="229" x2="196" y2="229"/>
+  <line class="fl" x1="140" y1="317" x2="196" y2="317"/>
+  <!-- drivers -> nav2 -->
+  <line class="fl" x1="346" y1="81"  x2="400" y2="98"/>
+  <line class="fl" x1="346" y1="229" x2="400" y2="170"/>
+  <!-- nav2 -> mux (cmd_vel), mux -> driver -->
+  <path class="fl" d="M 480 206 L 480 250 L 360 250 L 346 292"/>
+  <text class="lbl" x="425" y="244">/cmd_vel</text>
+  <path class="bk" d="M 196 320 Q 170 320 172 268"/>
+  <text class="lbl" x="150" y="285">/cmd_vel_drv</text>
+  <!-- topics -> rosbridge -->
+  <path class="fl" d="M 346 92 Q 380 340 400 396"/>
+  <path class="fl" d="M 346 166 Q 380 350 400 406"/>
+  <path class="fl" d="M 346 250 Q 390 360 400 416"/>
+  <path class="fl" d="M 480 206 L 480 380"/>
+  <text class="lbl" x="452" y="300">/map /plan TF</text>
+  <!-- rosbridge <-> GUI -->
+  <line class="fl" x1="560" y1="400" x2="660" y2="400"/>
+  <text class="lbl" x="610" y="392">ws://:9090</text>
+  <path class="bk" d="M 660 432 L 560 432"/>
+  <text class="lbl" x="610" y="450">/goal_pose /cmd_vel</text>
+  <!-- ssh -->
+  <line class="sh" x1="660" y1="506" x2="560" y2="500"/>
+  <text class="lbl" x="610" y="524">ssh :22 免密</text>
+  <!-- webview <-> rust -->
+  <line class="sh" x1="796" y1="480" x2="796" y2="464"/>
+  <text class="lbl" x="866" y="475">invoke (IPC)</text>
+</svg>
+<p class="dim">
+蓝实线=数据前向流（DDS→WS），绿虚线=控制反向流（目标/速度），黄点线=SSH 旁路（日志）。
+高亮框是本项目自研的两处关键件：cmd_vel_mux（安全仲裁）与 rosbridge/前端这条可视化主干。
+</p>
+
+<h2>4. 为什么这样设计 <small>Design rationale</small></h2>
+<table>
+<tr><th>决策</th><th>原因</th></tr>
+<tr><td>可视化走 rosbridge，不跑板端 rviz2</td><td>板端 rviz2 在 X 上必段错误（Ogre/GL，软件渲染也崩）；WebSocket+JSON 一条通道就够，前端零依赖可同时被浏览器和 Tauri 复用</td></tr>
+<tr><td>日志走 SSH 而不走 rosbridge</td><td>journalctl/dmesg/systemctl 不是 DDS 数据；/rosout 只覆盖 ROS 节点，服务崩了（比如雷达假活）恰恰要看 journald。SSH 命令做了<b>服务名白名单</b>，不拼接任意输入</td></tr>
+<tr><td>Rust 命令全部 async + spawn_blocking</td><td>Tauri 同步 command 跑在主线程，一次 ssh 1–4 s 会冻住整个窗口（踩过）</td></tr>
+<tr><td>相机传 JPEG 帧不传 H.264</td><td>板端 :8000 本来就是 MJPEG-over-WebSocket；/image_jpeg 是硬编码现成话题，46 KB/帧×15 fps ≈ 7.4 Mbps 家用 WiFi 无压力，前端一个 &lt;img&gt; 就能解码</td></tr>
+<tr><td>终止 = cancel 服务 + 零速连发</td><td>只 cancel 不刹车：DWB 最后一帧速度还在跑；只发零速不 cancel：bt_navigator 会重新规划。两个都要</td></tr>
+</table>
+
+<div class="note">
+已知隐患（Task #8）：雷达 USB 开机后偶发重枚举（ttyACM0→ttyACM1），oradar_scan 握着旧
+fd「假活」——服务 active 但 /scan 无数据，AMCL 因此拿不到 map TF。日志页 journald 视图
+就是为这类「/rosout 里看不见的死法」准备的。临时恢复：<code>systemctl restart ms200-lidar</code>。
+</div>
+
+<h2>5. 构建与运行 <small>Build & run</small></h2>
+<p>
+依赖：<code>rustup</code>（stable）+ <code>libwebkit2gtk-4.1-dev</code>。
+构建：<code>cd gui/src-tauri && cargo build</code>（前端改动会触发重编，
+<code>build.rs</code> 里有 <code>rerun-if-changed=../ui</code>）。
+运行：<code>./target/debug/rdk-x5-console</code>。发布版：<code>cargo build --release</code>
+（已配 strip+LTO）。前端 <code>gui/ui/index.html</code> 也可直接用浏览器打开——
+仪表盘全功能可用，仅日志页的 journald 部分需要 Tauri 后端。
+</p>
+
+</body>
+</html>
