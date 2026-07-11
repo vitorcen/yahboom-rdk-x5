@@ -134,7 +134,7 @@ ssh root@192.168.3.187         # 密码 yahboom
 ## 5. WiFi 模式切换脚本 / WiFi mode scripts
 
 板子默认是 **AP 热点模式**（发射 `RDK_X5_Robot`，`hostapd` + `dhcpd`，自身 IP 192.168.8.88）。
-以下脚本已部署到板子 `/home/sunrise/work/scripts/`（仓库 `board/home/sunrise/work/scripts/` 内留有同版本副本，按板子真实路径镜像）：
+以下脚本已部署到板子 `/home/sunrise/scripts/`（仓库 `board/home/sunrise/scripts/` 内留有同版本副本，按板子真实路径镜像）：
 
 | 脚本 | 作用 |
 | --- | --- |
@@ -159,13 +159,13 @@ AP 脚本则会恢复它，从而让所选模式在重启后保持一致。
 
 ```bash
 # 切客户端（运行后静默提示输入密码）
-sudo /home/sunrise/work/scripts/wifi_client.sh
+sudo /home/sunrise/scripts/wifi_client.sh
 
 # 也可临时指定其他网络；注意命令行明文密码可能进入 shell 历史
-sudo /home/sunrise/work/scripts/wifi_client.sh "SSID" "PASS"
+sudo /home/sunrise/scripts/wifi_client.sh "SSID" "PASS"
 
 # 恢复出厂 AP 热点
-sudo /home/sunrise/work/scripts/wifi_ap.sh
+sudo /home/sunrise/scripts/wifi_ap.sh
 ```
 
 > ⚠️ **切客户端会断开当前 AP 连接**：板子离开自己的热点、加入目标路由器后，
@@ -197,7 +197,7 @@ sudo /home/sunrise/work/scripts/wifi_ap.sh
 
 ```bash
 ssh root@192.168.3.187                                   # 先登录板子
-sudo /home/sunrise/work/scripts/camera_mode.sh tros      # 切到 tros 预览模式
+sudo /home/sunrise/scripts/camera_mode.sh tros      # 切到 tros 预览模式
 # 然后你电脑浏览器打开：  http://192.168.3.187:8000
 ```
 
@@ -292,7 +292,7 @@ yahboom-rdk-x5/
 │   ├── etc/systemd/system/         #   自启服务
 │   │   ├── ms200-lidar.service     #     → 雷达驱动（发布 /scan）
 │   │   └── rosbridge.service       #     → websocket 桥（ws://:9090）
-│   └── home/sunrise/work/scripts/  #   板端脚本（与板子同版本）
+│   └── home/sunrise/scripts/  #   板端脚本（与板子同版本）
 │       ├── wifi_client.sh          #     → 客户端模式（连路由器，失败自动回滚 AP）
 │       ├── wifi_ap.sh              #     → 恢复 AP 热点模式
 │       ├── wifi_diag.sh            #     → WiFi 扫描诊断（底层 iw，绕过 NM）

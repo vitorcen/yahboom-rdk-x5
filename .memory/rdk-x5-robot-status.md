@@ -17,7 +17,7 @@ metadata:
 - VNC：`192.168.3.187:5900`（x11vnc 出厂自带，已配密码）。
 - 本机(david) 部分操作需 sudo。家里路由器 5G SSID `YOUR_WIFI_SSID_5G`、2.4G `YOUR_WIFI_SSID_2G`（同一路由 192.168.3.x）。
 
-**板端文件镜像**：仓库 `board/` 按板子真实路径 1:1 镜像（`home/sunrise/work/scripts/` 板端脚本 + `etc/systemd/system/` 自启服务）；重刷机恢复=`scripts/deploy_board.sh`（rsync + enable）。
+**板端文件镜像**：仓库 `board/` 按板子真实路径 1:1 镜像（`home/sunrise/scripts/` 板端脚本 + `etc/systemd/system/` 自启服务）；重刷机恢复=`scripts/deploy_board.sh`（rsync + enable）。
 
 **WiFi 5G 坑**：aic8800D80 国家码是驱动模块参数，出厂 `country_code=00`+`custregd=Y`（忽略 `iw reg`），5G 扫不到。修法=写 `/etc/modprobe.d/aic8800.conf` 设 CN 并重载驱动。5G 最终是 codex 修好的。详见 README。
 

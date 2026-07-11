@@ -12,7 +12,7 @@ APP_DIR=/home/sunrise/sunriseRobot/app_SunriseRobot
 APP_MAIN="$APP_DIR/app_SunriseRobot.py"
 TROS_LOG=/tmp/mipi_preview.log
 YAHBOOM_LOG=/tmp/yahboom_camera_app.log
-CONTROL_ONLY=/home/sunrise/work/scripts/yahboom_control_only.py
+CONTROL_ONLY=/home/sunrise/scripts/yahboom_control_only.py
 
 stop_tros() {
     pkill -TERM -f '[r]os2 launch mipi_cam' 2>/dev/null || true

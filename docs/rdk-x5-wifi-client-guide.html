@@ -464,18 +464,18 @@
 
   <section id="usage">
     <h2>日常使用</h2>
-    <p>脚本部署在板端 <code>/home/sunrise/work/scripts/</code>，仓库的 <code>scripts/</code> 目录保留相同版本。</p>
+    <p>脚本部署在板端 <code>/home/sunrise/scripts/</code>，仓库的 <code>scripts/</code> 目录保留相同版本。</p>
 
     <h3>连接默认路由器</h3>
-    <pre class="command">sudo /home/sunrise/work/scripts/wifi_client.sh</pre>
+    <pre class="command">sudo /home/sunrise/scripts/wifi_client.sh</pre>
     <p>脚本会在终端静默提示输入家庭 Wi-Fi 密码；密码不会写入项目文件。</p>
 
     <h3>临时指定其他 Wi-Fi</h3>
-    <pre class="command">sudo /home/sunrise/work/scripts/wifi_client.sh "SSID" "PASSWORD"</pre>
+    <pre class="command">sudo /home/sunrise/scripts/wifi_client.sh "SSID" "PASSWORD"</pre>
     <p>命令行参数可能被 shell 历史记录。需要避免明文历史时，直接省略密码并使用交互提示。</p>
 
     <h3>同时指定国家码</h3>
-    <pre class="command">sudo /home/sunrise/work/scripts/wifi_client.sh "SSID" "PASSWORD" CN</pre>
+    <pre class="command">sudo /home/sunrise/scripts/wifi_client.sh "SSID" "PASSWORD" CN</pre>
 
     <div class="callout danger">
       <strong>SSH 会断开：</strong>如果电脑当前连接的是板载热点，client 切换成功后 <code>192.168.8.88</code> 会立即失效。这是预期行为。电脑需改连目标路由器，再使用板子的新 DHCP 地址登录。
@@ -545,7 +545,7 @@ getent ahostsv4 www.baidu.com</pre>
 
   <section id="recovery">
     <h2>恢复板载 AP 热点</h2>
-    <pre class="command">sudo /home/sunrise/work/scripts/wifi_ap.sh</pre>
+    <pre class="command">sudo /home/sunrise/scripts/wifi_ap.sh</pre>
 
     <p>恢复成功后：</p>
     <ul>

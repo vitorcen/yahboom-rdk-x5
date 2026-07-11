@@ -345,20 +345,20 @@
 
   <section id="manual">
     <h2>手工启动</h2>
-    <p>项目提供统一模式切换脚本，并同步到板子的 <code>/home/sunrise/work/scripts/</code>。</p>
+    <p>项目提供统一模式切换脚本，并同步到板子的 <code>/home/sunrise/scripts/</code>。</p>
     <pre class="command">ssh root@192.168.3.187
 
 # 切到 TogetheROS 浏览器预览
-sudo /home/sunrise/work/scripts/camera_mode.sh tros
+sudo /home/sunrise/scripts/camera_mode.sh tros
 
 # 切回亚博手机 APP（IP、控制端口、视频端口）
-sudo /home/sunrise/work/scripts/camera_mode.sh yahboom
+sudo /home/sunrise/scripts/camera_mode.sh yahboom
 
 # TogetheROS 负责视频，亚博 APP 只负责遥控
-sudo /home/sunrise/work/scripts/camera_mode.sh hybrid
+sudo /home/sunrise/scripts/camera_mode.sh hybrid
 
 # 查看当前模式和监听端口
-sudo /home/sunrise/work/scripts/camera_mode.sh status</pre>
+sudo /home/sunrise/scripts/camera_mode.sh status</pre>
     <p>便捷入口：<code>camera_preview.sh</code> 等价于 <code>camera_mode.sh tros</code>；<code>camera_yahboom.sh</code> 等价于 <code>camera_mode.sh yahboom</code>。</p>
     <p>脚本执行以下操作：</p>
     <ol>
