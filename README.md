@@ -57,6 +57,14 @@ ping -b 192.168.3.255 -c 3 2>/dev/null; ip neigh | grep -i '18:ce:df:79:2e:8b'
 板子的 `~/.bashrc`（root 和 sunrise 都）已自动 `source` 好 tros + 两个工作空间，并设 `ROS_DOMAIN_ID=99`。
 **SSH 上去直接就能敲 `ros2 ...`，不用手动 source。** 若要在你的电脑上跑 ROS2 与板子通信，域号也要设成 `99`。
 
+### 0.5 重刷机后一键恢复 / Restore after reflash
+
+仓库 `board/` 目录按板子真实路径 1:1 镜像所有部署文件（脚本 + 自启服务）。刷完新系统后在电脑上跑：
+
+```bash
+scripts/deploy_board.sh [板子IP]     # rsync board/ → 板子 / ，并 enable 雷达+rosbridge 自启
+```
+
 ---
 
 ## 1. 板子接入信息 / Access
@@ -126,7 +134,7 @@ ssh root@192.168.3.187         # 密码 yahboom
 ## 5. WiFi 模式切换脚本 / WiFi mode scripts
 
 板子默认是 **AP 热点模式**（发射 `RDK_X5_Robot`，`hostapd` + `dhcpd`，自身 IP 192.168.8.88）。
-以下脚本已部署到板子 `/home/sunrise/work/scripts/`（仓库 `scripts/` 内留有同版本副本）：
+以下脚本已部署到板子 `/home/sunrise/work/scripts/`（仓库 `board/home/sunrise/work/scripts/` 内留有同版本副本，按板子真实路径镜像）：
 
 | 脚本 | 作用 |
 | --- | --- |
@@ -249,14 +257,17 @@ ros2 launch oradar_lidar ms200_scan_gmapping.launch.py
 
 **推荐：浏览器实时画面 / Live view in browser（rosbridge，已验证）**
 
+板上已装两个**开机自启**服务（unit 文件在仓库 `board/etc/systemd/system/`，重启实测通过）：
+
+| 服务 | 作用 |
+|---|---|
+| `ms200-lidar` | 雷达驱动，发布 `/scan` |
+| `rosbridge` | DDS → WebSocket 桥（`ws://<板子IP>:9090`） |
+
 ```bash
-# 板上（两条 transient unit，重启自动消失，不污染开机项）：
-systemd-run --unit=ms200-lidar --collect --setenv=HOME=/root --setenv=ROS_LOG_DIR=/tmp/roslog \
-  bash -c "mkdir -p /tmp/roslog; source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; export ROS_DOMAIN_ID=99; exec ros2 launch oradar_lidar ms200_scan.launch.py"
-systemd-run --unit=rosbridge --collect --setenv=HOME=/root --setenv=ROS_LOG_DIR=/tmp/roslog \
-  bash -c "source /opt/tros/humble/setup.bash; export ROS_DOMAIN_ID=99; exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
-# 电脑浏览器打开 docs/lidar-live-viewer.html → 自动连 ws://<板子IP>:9090 实时出图
-# 停止：systemctl stop ms200-lidar rosbridge
+# 开机即用：电脑浏览器打开 docs/lidar-live-viewer.html → 自动连 ws://<板子IP>:9090 实时出图
+# 管理：  systemctl status|stop|disable ms200-lidar rosbridge
+# 重刷机后恢复：在电脑上跑 scripts/deploy_board.sh（rsync board/ 镜像 + enable 服务）
 ```
 
 坑位记录 / Pitfalls（都踩实过）：
@@ -277,13 +288,20 @@ yahboom-rdk-x5/
 ├── README.md                       # 本文件
 ├── CLAUDE.md / AGENTS.md           # 给 AI 协作工具的项目说明
 ├── .memory/                        # 跨工具持久记忆（协议 SKILL.md + 索引 + 事实）
-├── scripts/                        # 与板子 /home/sunrise/work/scripts 同版本
-│   ├── wifi_client.sh              #   → 客户端模式（连路由器，失败自动回滚 AP）
-│   ├── wifi_ap.sh                  #   → 恢复 AP 热点模式
-│   ├── wifi_diag.sh                #   → WiFi 扫描诊断（底层 iw，绕过 NM）
-│   ├── camera_mode.sh              #   → 相机模式切换（tros | yahboom | hybrid | status）
-│   ├── camera_preview.sh           #   → tros 相机 Web 预览便捷入口（:8000）
-│   └── camera_yahboom.sh           #   → 切回完整亚博 APP 相机模式便捷入口
+├── board/                          # 板端文件 1:1 镜像（路径与板子一致，重刷机后一键恢复）
+│   ├── etc/systemd/system/         #   自启服务
+│   │   ├── ms200-lidar.service     #     → 雷达驱动（发布 /scan）
+│   │   └── rosbridge.service       #     → websocket 桥（ws://:9090）
+│   └── home/sunrise/work/scripts/  #   板端脚本（与板子同版本）
+│       ├── wifi_client.sh          #     → 客户端模式（连路由器，失败自动回滚 AP）
+│       ├── wifi_ap.sh              #     → 恢复 AP 热点模式
+│       ├── wifi_diag.sh            #     → WiFi 扫描诊断（底层 iw，绕过 NM）
+│       ├── camera_mode.sh          #     → 相机模式切换（tros | yahboom | hybrid | status）
+│       ├── camera_preview.sh       #     → tros 相机 Web 预览便捷入口（:8000）
+│       ├── camera_yahboom.sh       #     → 切回完整亚博 APP 相机模式便捷入口
+│       └── yahboom_control_only.py #     → hybrid 模式的 control-only 包装器
+├── scripts/                        # 主机侧工具（在你电脑上跑）
+│   └── deploy_board.sh             #   → 重刷机一键恢复：rsync board/ → 板子 / + enable 服务
 └── docs/
     ├── rdk-x5-system-report.html              # SSH 实采的系统体检报告（离线可看）
     ├── rdk-x5-wifi-client-guide.html          # WiFi 客户端切换实机指南

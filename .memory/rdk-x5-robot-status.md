@@ -17,7 +17,7 @@ metadata:
 - VNC：`192.168.3.187:5900`（x11vnc 出厂自带，已配密码）。
 - 本机(david) 部分操作需 sudo。家里路由器 5G SSID `YOUR_WIFI_SSID_5G`、2.4G `YOUR_WIFI_SSID_2G`（同一路由 192.168.3.x）。
 
-**板子已部署脚本** `/home/sunrise/work/scripts/`（仓库 `scripts/` 有副本）：`wifi_client.sh` `wifi_ap.sh` `wifi_diag.sh` `camera_preview.sh`。
+**板端文件镜像**：仓库 `board/` 按板子真实路径 1:1 镜像（`home/sunrise/work/scripts/` 板端脚本 + `etc/systemd/system/` 自启服务）；重刷机恢复=`scripts/deploy_board.sh`（rsync + enable）。
 
 **WiFi 5G 坑**：aic8800D80 国家码是驱动模块参数，出厂 `country_code=00`+`custregd=Y`（忽略 `iw reg`），5G 扫不到。修法=写 `/etc/modprobe.d/aic8800.conf` 设 CN 并重载驱动。5G 最终是 codex 修好的。详见 README。
 
@@ -26,7 +26,7 @@ metadata:
 - 当前启动行为：tros 预览为手工后台启动，未配置 systemd 自启；重启后亚博 XFCE APP 会恢复自启。详见 `docs/rdk-x5-mipi-camera-preview-guide.html`。
 - 模式切换：`camera_mode.sh` 支持 `tros`、`yahboom` 和 `hybrid`。hybrid 用 control-only 包装器保留亚博 TCP 6000 遥控，由 TogetheROS 独占 CSI0 并在 8000 提供视频。
 
-**雷达已验证（2026-07-11）**：ORADAR MS200，`/scan` 10 Hz、360°、0.15–20 m。板端 rviz2 必 SEGV（Ogre/GL，软件渲染也崩）→ 可视化走 rosbridge(:9090)+`docs/lidar-live-viewer.html`。systemd-run 启动 ROS 节点必须设 `HOME`/`ROS_LOG_DIR`；SSH 里 `pkill -f` 会自匹配杀掉远程 shell（用 `[s]` 括号技巧）。详见 README §8.2。本机→板子 root 免密 SSH 已配好（2026-07-11 实测）。
+**雷达已验证（2026-07-11）**：ORADAR MS200，`/scan` 10 Hz、360°、0.15–20 m。板端 rviz2 必 SEGV（Ogre/GL，软件渲染也崩）→ 可视化走 rosbridge(:9090)+`docs/lidar-live-viewer.html`。`ms200-lidar`+`rosbridge` 已装为**开机自启服务**（重启实测通过；雷达马达上电即转，与节点无关）。systemd 启动 ROS 节点必须设 `HOME`/`ROS_LOG_DIR`；SSH 里 `pkill -f` 会自匹配杀掉远程 shell（用 `[s]` 括号技巧）。详见 README §8.2。本机→板子 root 免密 SSH 已配好（2026-07-11 实测）。
 
 用户偏好：中文沟通、直接犀利；每弄清一个问题就让我把结论记进 README 存档。
 

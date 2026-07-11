@@ -1,0 +1,14 @@
+[Unit]
+Description=ORADAR MS200 LiDAR driver (publishes /scan)
+After=network.target dev-oradar.device
+Wants=dev-oradar.device
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; exec ros2 launch oradar_lidar ms200_scan.launch.py"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
