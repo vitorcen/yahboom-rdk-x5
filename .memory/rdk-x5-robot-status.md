@@ -26,11 +26,19 @@ metadata:
 - 当前启动行为：tros 预览为手工后台启动，未配置 systemd 自启；重启后亚博 XFCE APP 会恢复自启。详见 `docs/rdk-x5-mipi-camera-preview-guide.html`。
 - 模式切换：`camera_mode.sh` 支持 `tros`、`yahboom` 和 `hybrid`。hybrid 用 control-only 包装器保留亚博 TCP 6000 遥控，由 TogetheROS 独占 CSI0 并在 8000 提供视频。
 
-**桌面 GUI（2026-07-11）**：`gui/` Tauri 2 应用（`cargo build`，需 libwebkit2gtk-4.1-dev），
-仪表盘=viewer 全功能+相机窗拖动/等比拉伸，日志 Tab=/rosout 实时+ssh journalctl（async
-command 必须 spawn_blocking 否则冻 UI；改 ui/ 需 build.rs rerun-if-changed 触发重编）。
-架构文档 `docs/rdk-x5-gui-architecture.html`。坑：雷达 USB 会重枚举致驱动假活（重启
-ms200-lidar 恢复）；xdotool 合成点击要先 windowactivate --sync。
+**桌面 GUI（2026-07-11）**：`gui/` Tauri 2 应用（`./gui/run.sh` 一键编译启动，需
+libwebkit2gtk-4.1-dev），前端已拆模块：ui/index.html 纯结构 + style.css + js/{state,ros,
+viewer,camera,teleop,logs,main}.js，ros.js 的 onTopic() 注册表分发话题。仪表盘=viewer
+全功能+相机窗拖动/等比拉伸+**键盘遥控**（WASD/方向键→/cmd_vel 0.15 m/s，Q/E 横移，
+空格=急停，走 mux 低优先级、手柄可压过；失焦/切 Tab 自动刹停），日志 Tab=/rosout 实时
++ssh journalctl（async command 必须 spawn_blocking 否则冻 UI；改 ui/ 需 build.rs
+rerun-if-changed 触发重编）。架构文档 `docs/rdk-x5-gui-architecture.html`。坑：雷达 USB
+会重枚举致驱动假活（重启 ms200-lidar 恢复）；xdotool 合成点击要先 windowactivate --sync，
+而合成**按键**在无 WM 的 X 上进不了 GTK 窗口（验证键盘逻辑改用 chromium --headless=new
++ CDP dispatchKeyEvent，板端 rclpy 探针收 /cmd_vel）。
+**板端 ROS_DOMAIN_ID=99**：所有 systemd 服务设了域 99，ssh 上板调试 ros2 CLI 必须先
+`export ROS_DOMAIN_ID=99`，否则所有话题"Unknown topic"，酷似服务全挂。另 `ros2 topic echo
+/cmd_vel` 会嗅探到 transient_local 发布者而锁错 QoS 收不到 volatile 消息，判决要用 rclpy 探针。
 
 **雷达已验证（2026-07-11）**：ORADAR MS200，`/scan` 10 Hz、360°、0.15–20 m。板端 rviz2 必 SEGV（Ogre/GL，软件渲染也崩）→ 可视化走 rosbridge(:9090)+`docs/lidar-live-viewer.html`（现已是全功能仪表盘：地图/雷达/相机15fps/电量%/拖线导航/终止/断线自动重连）。**5 个服务开机自启**（ms200-lidar/rosbridge/mipi-cam/nav-bringup/nav2，重启实测），亚博 APP 自启已禁。Nav2 导航详见 [[rdk-x5-nav2-plan]]。systemd 启动 ROS 节点必须设 `HOME`/`ROS_LOG_DIR`；SSH 里 `pkill -f` 会自匹配杀掉远程 shell（用 `[s]` 括号技巧）。本机→板子 root 免密 SSH 已配好（2026-07-11 实测）。
 

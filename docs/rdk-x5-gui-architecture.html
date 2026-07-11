@@ -24,8 +24,10 @@
 
 <h1>RDK X5 控制台 GUI 架构 <small>Tauri GUI Architecture</small></h1>
 <p>
-<code>gui/</code> 是一个 Tauri 2 桌面应用：前端为零依赖单文件
-<code>gui/ui/index.html</code>（编译时嵌入二进制），后端是一层很薄的 Rust
+<code>gui/</code> 是一个 Tauri 2 桌面应用：前端零依赖（<code>gui/ui/</code>：
+index.html 纯结构 + style.css + js/ 按职责拆模块——ros.js 连接与话题分发注册表、
+viewer.js 渲染与导航、camera.js 相机窗、teleop.js 键盘遥控、logs.js 日志页、
+main.js 装配；编译时嵌入二进制），后端是一层很薄的 Rust
 （3 个 async command，全部是 ssh 包装）。它与小车之间<b>只有两条通信通道</b>：
 <b>rosbridge WebSocket（ws://192.168.3.187:9090）</b>承载所有实时数据与控制指令，
 <b>SSH（192.168.3.187:22，免密公钥）</b>承载日志与服务状态查询。没有第三条。
@@ -36,7 +38,7 @@ data & control; SSH (:22) for logs & service status.</span>
 <h2>1. 每个界面元素走什么协议、哪个端口 <small>UI element → URI / port</small></h2>
 <table>
 <tr><th>界面元素</th><th>协议 / URI / 端口</th><th>话题或命令</th><th>方向</th></tr>
-<tr><td>雷达视图（极坐标）</td><td rowspan="7"><code>ws://192.168.3.187:9090</code><br>rosbridge v2 JSON</td>
+<tr><td>雷达视图（极坐标）</td><td rowspan="8"><code>ws://192.168.3.187:9090</code><br>rosbridge v2 JSON</td>
     <td><code>/scan</code> (sensor_msgs/LaserScan, 10 Hz)</td><td>订阅 ←</td></tr>
 <tr><td>地图视图（栅格+位姿+路径）</td>
     <td><code>/map</code> (OccupancyGrid, 限流 1 s) + <code>/tf</code> <code>/tf_static</code> + <code>/plan</code></td><td>订阅 ←</td></tr>
@@ -45,6 +47,7 @@ data & control; SSH (:22) for logs & service status.</span>
 <tr><td>电量胶囊 🔋</td><td><code>/voltage</code> (Float32, 限流 5 s；2S 电池 8.4 V 满 / ≈7.6 V 蜂鸣)</td><td>订阅 ←</td></tr>
 <tr><td>拖线设导航目标</td><td><code>/goal_pose</code> (PoseStamped, frame=map)</td><td>发布 →</td></tr>
 <tr><td>■ 终止按钮</td><td>service <code>/navigate_to_pose/_action/cancel_goal</code>（零 uuid=全取消）+ 连发 5 帧零速 <code>/cmd_vel</code></td><td>调用/发布 →</td></tr>
+<tr><td>⌨️ 键盘遥控（WASD/方向键，Q/E 横移，空格急停）</td><td><code>/cmd_vel</code> (Twist, 按住 10 Hz 流, 0.15 m/s / 0.8 rad/s；mux 低优先级，手柄可随时压过；松键/失焦/切 Tab 即发零速)</td><td>发布 →</td></tr>
 <tr><td>日志页 /rosout 实时流</td><td><code>/rosout</code> (rcl_interfaces/Log，全节点汇聚)</td><td>订阅 ←</td></tr>
 <tr><td>日志页 systemd 日志 / dmesg</td><td rowspan="3"><code>ssh root@192.168.3.187</code>（22 端口，免密公钥，Tauri Rust 后端执行）</td>
     <td><code>journalctl -u &lt;服务&gt;</code> / <code>dmesg</code>（服务名白名单，防注入）</td><td>拉取 ←</td></tr>
@@ -215,10 +218,11 @@ fd「假活」——服务 active 但 /scan 无数据，AMCL 因此拿不到 map
 <h2>5. 构建与运行 <small>Build & run</small></h2>
 <p>
 依赖：<code>rustup</code>（stable）+ <code>libwebkit2gtk-4.1-dev</code>。
-构建：<code>cd gui/src-tauri && cargo build</code>（前端改动会触发重编，
-<code>build.rs</code> 里有 <code>rerun-if-changed=../ui</code>）。
-运行：<code>./target/debug/rdk-x5-console</code>。发布版：<code>cargo build --release</code>
-（已配 strip+LTO）。前端 <code>gui/ui/index.html</code> 也可直接用浏览器打开——
+一键构建并运行：<code>./gui/run.sh</code>（发布版加 <code>--release</code>，已配
+strip+LTO；前端改动会触发重编，<code>build.rs</code> 里有
+<code>rerun-if-changed=../ui</code>）。前端也可脱离 Tauri 用浏览器打开——ES 模块受
+file:// 限制，需 <code>cd gui/ui && python3 -m http.server 8899</code> 后访问
+<code>http://127.0.0.1:8899/</code>——
 仪表盘全功能可用，仅日志页的 journald 部分需要 Tauri 后端。
 </p>
 
