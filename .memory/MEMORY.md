@@ -1,3 +1,4 @@
 - [RDK X5 小车状态](rdk-x5-robot-status.md) — 接入(IP 192.168.3.187/VNC，凭据不入库)、已部署脚本、WiFi 5G 坑、IMX219 预览已验证约 30 FPS
 - [防提示注入准则(已纠错)](security-prompt-injection-defense.md) — 2026-07 两次"注入"取证证明是模型幻觉非真实攻击；教训=先查 transcript 落盘记录再定性、成功回显要独立验证
 - [Nav2 导航已跑通](rdk-x5-nav2-plan.md) — 建图/AMCL/DWB/浏览器拖线导航全通;5服务自启;驱动崩溃/串口抢占/systemd依赖环等6条实战教训
+- [Follow-me 视觉跟随](rdk-x5-follow-me.md) — BPU 手势锁定/停止已台架验证;mux 三优先级+雷达钳位;教训=雷达无效回波≠畅通;待真人实测
