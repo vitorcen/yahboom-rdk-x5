@@ -26,6 +26,8 @@ metadata:
 - 当前启动行为：tros 预览为手工后台启动，未配置 systemd 自启；重启后亚博 XFCE APP 会恢复自启。详见 `docs/rdk-x5-mipi-camera-preview-guide.html`。
 - 模式切换：`camera_mode.sh` 支持 `tros`、`yahboom` 和 `hybrid`。hybrid 用 control-only 包装器保留亚博 TCP 6000 遥控，由 TogetheROS 独占 CSI0 并在 8000 提供视频。
 
+**雷达已验证（2026-07-11）**：ORADAR MS200，`/scan` 10 Hz、360°、0.15–20 m。板端 rviz2 必 SEGV（Ogre/GL，软件渲染也崩）→ 可视化走 rosbridge(:9090)+`docs/lidar-live-viewer.html`。systemd-run 启动 ROS 节点必须设 `HOME`/`ROS_LOG_DIR`；SSH 里 `pkill -f` 会自匹配杀掉远程 shell（用 `[s]` 括号技巧）。详见 README §8.2。本机→板子 root 免密 SSH 已配好（2026-07-11 实测）。
+
 用户偏好：中文沟通、直接犀利；每弄清一个问题就让我把结论记进 README 存档。
 
 **进阶路线（2026-07-10）**：新增 `docs/rdk-x5-official-experiments-and-advanced-practice.html`，按 P0/P1/P2 整理官方实验，并给出 Nav2、速度安全监督、数据采集、BPU 感知、Wi-Fi ROS 2 远端推理与 LiDAR-to-Action 的渐进项目清单。

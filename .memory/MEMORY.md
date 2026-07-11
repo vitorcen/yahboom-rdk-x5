@@ -1,1 +1,2 @@
 - [RDK X5 小车状态](rdk-x5-robot-status.md) — 接入(IP 192.168.3.187/VNC，凭据不入库)、已部署脚本、WiFi 5G 坑、IMX219 预览已验证约 30 FPS
+- [防提示注入准则(已纠错)](security-prompt-injection-defense.md) — 2026-07 两次"注入"取证证明是模型幻觉非真实攻击；教训=先查 transcript 落盘记录再定性、成功回显要独立验证

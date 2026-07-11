@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MS200 LiDAR 实时查看器</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0b0e14; color:#cdd6f4; font:14px/1.5 system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+  header { padding:10px 16px; width:100%; box-sizing:border-box; display:flex; gap:16px;
+           align-items:center; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  .pill { padding:2px 10px; border-radius:999px; font-size:12px; background:#31344b; }
+  .ok  { background:#1e3a2f; color:#7ee2a8; }
+  .bad { background:#3a1e1e; color:#f38ba8; }
+  canvas { background:#0f131f; border:1px solid #262b3d; border-radius:8px;
+           max-width:96vw; max-height:82vh; }
+  input { width:280px; background:#161a26; color:#cdd6f4; border:1px solid #31344b;
+          border-radius:6px; padding:4px 8px; }
+  button { background:#2b5c8a; color:#fff; border:0; border-radius:6px; padding:5px 14px; cursor:pointer; }
+  button:hover { background:#367; }
+  #stats { font-size:12px; color:#8b93b5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ORADAR MS200 · /scan 实时</h1>
+  <input id="url" value="ws://192.168.3.187:9090">
+  <button id="btn">连接</button>
+  <span id="st" class="pill bad">未连接</span>
+  <span id="stats"></span>
+</header>
+<canvas id="cv" width="900" height="900"></canvas>
+
+<section id="how" style="max-width:900px;padding:24px 16px 48px;color:#aab2d0">
+<h2 style="color:#cdd6f4;font-size:15px">原理 / How it works</h2>
+<p>
+数据链路：MS200 雷达经串口（<code>/dev/oradar → ttyACM0</code>）进入板端 <code>oradar_scan</code>
+驱动节点，以 10 Hz 发布 ROS 2 话题 <code>/scan</code>（<code>sensor_msgs/LaserScan</code>，450 点/圈）。
+<code>rosbridge_server</code> 在板上把 DDS 话题桥接成 WebSocket（:9090）+ JSON。本页面用
+<strong>手写的最小 rosbridge v2 客户端</strong>（原生 <code>WebSocket</code>，零外部依赖、无 CDN）发送一条
+<code>{op:"subscribe", topic:"/scan"}</code>，之后每帧 <code>publish</code> 消息到达即重绘 Canvas。
+<br>Pipeline: serial → ROS 2 driver → rosbridge (DDS→WebSocket/JSON) → hand-rolled JS client → Canvas.
+</p>
+
+<svg viewBox="0 0 860 320" role="img" aria-label="数据链路框图" style="width:100%;height:auto;margin:12px 0">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#6c7bd0"/>
+    </marker>
+  </defs>
+  <style>
+    .box{fill:#161a26;stroke:#31344b;rx:8}
+    .t{fill:#cdd6f4;font:13px system-ui;text-anchor:middle}
+    .s{fill:#8b93b5;font:11px system-ui;text-anchor:middle}
+    .lbl{fill:#7ea6e0;font:11px system-ui;text-anchor:middle}
+    .flow{stroke:#6c7bd0;stroke-width:1.6;marker-end:url(#arr);fill:none}
+    .zone{fill:none;stroke:#31344b;stroke-dasharray:5 4}
+    .zt{fill:#5d6485;font:11px system-ui}
+  </style>
+  <!-- 板端区域 -->
+  <rect class="zone" x="10" y="30" width="520" height="200"/>
+  <text class="zt" x="20" y="22">RDK X5 板端 (192.168.3.187)</text>
+  <!-- 本机区域 -->
+  <rect class="zone" x="570" y="30" width="280" height="200"/>
+  <text class="zt" x="580" y="22">你的电脑浏览器</text>
+
+  <rect class="box" x="25"  y="70" width="130" height="70" rx="8"/>
+  <text class="t" x="90" y="98">ORADAR MS200</text>
+  <text class="s" x="90" y="118">360° 2D 激光雷达</text>
+
+  <rect class="box" x="205" y="70" width="140" height="70" rx="8"/>
+  <text class="t" x="275" y="92">oradar_scan 节点</text>
+  <text class="s" x="275" y="110">ms200_scan.launch.py</text>
+  <text class="s" x="275" y="126">systemd-run 常驻</text>
+
+  <rect class="box" x="390" y="70" width="125" height="70" rx="8"/>
+  <text class="t" x="452" y="98">rosbridge</text>
+  <text class="s" x="452" y="118">DDS → WS/JSON</text>
+
+  <rect class="box" x="600" y="70" width="220" height="70" rx="8"/>
+  <text class="t" x="710" y="92">本页 JS 客户端 + Canvas</text>
+  <text class="s" x="710" y="110">subscribe /scan → 逐帧重绘</text>
+  <text class="s" x="710" y="126">极坐标→直角坐标，x前=屏上</text>
+
+  <line class="flow" x1="155" y1="105" x2="205" y2="105"/>
+  <text class="lbl" x="180" y="95">串口</text>
+  <line class="flow" x1="345" y1="105" x2="390" y2="105"/>
+  <text class="lbl" x="368" y="95">/scan</text>
+  <line class="flow" x1="515" y1="105" x2="600" y2="105"/>
+  <text class="lbl" x="558" y="95">ws://:9090</text>
+
+  <!-- 底部注释行 -->
+  <rect class="box" x="25" y="250" width="795" height="52" rx="8"/>
+  <text class="s" x="422" y="272">LaserScan 帧：angle_min + i × angle_increment 得每点角度 a，距离 r → 屏幕坐标 (x,y) = (−sin a·r, −cos a·r)·缩放</text>
+  <text class="s" x="422" y="290">过滤 r ∉ (range_min, range_max) 的无效点；显示半径取有效距离 95 分位 ×1.2 自适应（最小 2 m）</text>
+</svg>
+
+<p style="font-size:12px">
+为什么不用板端 rviz2：rviz2 在本板 X 桌面稳定段错误（Ogre/GL 栈，软件渲染也崩）。
+浏览器方案帧率更高、跨平台、无需 VNC。启动/停止命令见仓库 README §8.2。
+<br>Why not rviz2 on the board: it consistently segfaults (Ogre/GL); this browser viewer is
+lighter and needs no VNC. See README §8.2 for start/stop commands.
+</p>
+</section>
+
+<script>
+// Minimal hand-rolled rosbridge v2 client: subscribe sensor_msgs/LaserScan on /scan.
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+const st = document.getElementById('st'), stats = document.getElementById('stats');
+let ws = null, frames = 0, lastT = performance.now(), fps = 0;
+let viewRange = 4.0;              // meters shown from center to edge; auto-adapts
+
+function connect() {
+  if (ws) { ws.close(); ws = null; }
+  ws = new WebSocket(document.getElementById('url').value);
+  st.textContent = '连接中…'; st.className = 'pill';
+  ws.onopen = () => {
+    st.textContent = '已连接'; st.className = 'pill ok';
+    ws.send(JSON.stringify({ op:'subscribe', topic:'/scan',
+      type:'sensor_msgs/LaserScan', throttle_rate:0, queue_length:1 }));
+  };
+  ws.onclose = () => { st.textContent = '已断开'; st.className = 'pill bad'; };
+  ws.onerror  = () => { st.textContent = '连接失败'; st.className = 'pill bad'; };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.op === 'publish' && m.topic === '/scan') draw(m.msg);
+  };
+}
+
+function draw(scan) {
+  const W = cv.width, H = cv.height, R = Math.min(W,H)/2 - 20;
+  const cxp = W/2, cyp = H/2;
+  // auto range: 95th percentile of finite ranges, snapped up, min 2 m
+  const finite = scan.ranges.filter(r => r > scan.range_min && r < scan.range_max && isFinite(r));
+  if (finite.length) {
+    const s = [...finite].sort((a,b)=>a-b);
+    const p95 = s[Math.floor(s.length*0.95)];
+    viewRange = Math.max(2, Math.ceil(p95*1.2*2)/2);
+  }
+  cx.clearRect(0,0,W,H);
+  // grid rings each 1 m
+  cx.strokeStyle = '#232838'; cx.fillStyle = '#5d6485'; cx.font = '11px system-ui';
+  for (let m = 1; m <= viewRange; m++) {
+    const r = R * m/viewRange;
+    cx.beginPath(); cx.arc(cxp, cyp, r, 0, Math.PI*2); cx.stroke();
+    cx.fillText(m + ' m', cxp + r*0.7071 + 3, cyp - r*0.7071 - 3);
+  }
+  cx.beginPath(); cx.moveTo(cxp-R,cyp); cx.lineTo(cxp+R,cyp);
+  cx.moveTo(cxp,cyp-R); cx.lineTo(cxp,cyp+R); cx.stroke();
+  // robot marker (x forward = up)
+  cx.fillStyle = '#7ee2a8';
+  cx.beginPath(); cx.moveTo(cxp,cyp-10); cx.lineTo(cxp-6,cyp+8); cx.lineTo(cxp+6,cyp+8);
+  cx.closePath(); cx.fill();
+  // scan points: ROS x-forward/y-left -> screen up/left
+  cx.fillStyle = '#f9a94a';
+  let n = 0;
+  for (let i = 0; i < scan.ranges.length; i++) {
+    const r = scan.ranges[i];
+    if (!(r > scan.range_min && r < scan.range_max && isFinite(r))) continue;
+    const a = scan.angle_min + i*scan.angle_increment;
+    const px = cxp - Math.sin(a) * r/viewRange * R;   // y-left -> screen-left
+    const py = cyp - Math.cos(a) * r/viewRange * R;   // x-forward -> screen-up
+    cx.fillRect(px-1.5, py-1.5, 3, 3); n++;
+  }
+  frames++;
+  const now = performance.now();
+  if (now - lastT > 1000) { fps = frames*1000/(now-lastT); frames = 0; lastT = now; }
+  stats.textContent = `${n} 点 · ${fps.toFixed(1)} 帧/s · 显示半径 ${viewRange} m · frame ${scan.header.frame_id}`;
+}
+
+document.getElementById('btn').onclick = connect;
+connect();
+</script>
+</body>
+</html>

@@ -231,18 +231,40 @@ ros2 run yahboomcar_ctrl yahboom_keyboard      # 手柄则用 yahboom_joy
 > ⚠️ **安全**：一敲方向键车就真的会动。先把小车架空或留足空间，避免冲下桌。
 > 底盘另有标定/巡逻入口：`yahboomcar_bringup` 下还有 `calibrate_linear` / `calibrate_angular` / `patrol`。
 
-### 8.2 看雷达 / LiDAR
+### 8.2 看雷达 / LiDAR（2026-07-11 实机验证 ✅）
+
+实测结论 / Verified: `/scan` 稳定 **10 Hz**，360°，量程 0.15–20 m，frame `lidar_link`。
 
 ```bash
 # 只发布 /scan 数据（无图形界面，SSH 即可）
 ros2 launch oradar_lidar ms200_scan.launch.py
 
-# 带 RViz2 可视化（需要图形界面 → 走 VNC 或 HDMI 桌面，纯 SSH 看不到窗口）
-ros2 launch oradar_lidar ms200_scan_view.launch.py
-
 # 雷达 + gmapping 建图
 ros2 launch oradar_lidar ms200_scan_gmapping.launch.py
 ```
+
+> ❌ **rviz2 在板端桌面必崩**：`ms200_scan_view.launch.py` 里的 rviz2 在板子 X 上稳定
+> SEGV（Ogre/GL 栈问题；root/sunrise、`LIBGL_ALWAYS_SOFTWARE=1`、`QT_X11_NO_MITSHM=1`
+> 全试过，约 6 秒必崩）。**看画面走浏览器方案**，别浪费时间在 VNC + rviz2 上。
+
+**推荐：浏览器实时画面 / Live view in browser（rosbridge，已验证）**
+
+```bash
+# 板上（两条 transient unit，重启自动消失，不污染开机项）：
+systemd-run --unit=ms200-lidar --collect --setenv=HOME=/root --setenv=ROS_LOG_DIR=/tmp/roslog \
+  bash -c "mkdir -p /tmp/roslog; source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; export ROS_DOMAIN_ID=99; exec ros2 launch oradar_lidar ms200_scan.launch.py"
+systemd-run --unit=rosbridge --collect --setenv=HOME=/root --setenv=ROS_LOG_DIR=/tmp/roslog \
+  bash -c "source /opt/tros/humble/setup.bash; export ROS_DOMAIN_ID=99; exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+# 电脑浏览器打开 docs/lidar-live-viewer.html → 自动连 ws://<板子IP>:9090 实时出图
+# 停止：systemctl stop ms200-lidar rosbridge
+```
+
+坑位记录 / Pitfalls（都踩实过）：
+- **systemd-run 必须给 `HOME`**（或 `ROS_LOG_DIR`），否则 rcl 日志初始化 abort：
+  `failed to configure logging: Failed to get logging directory`。
+- **SSH 里 `pkill -f ms200_scan` 会杀掉自己的远程 shell**（命令行自匹配 → exit 255 无输出），
+  用正则括号避开：`pkill -f "ms200_[s]can"`。
+- 后台起 launch 别用裸 `&`（挂住 SSH stdout），用 `systemd-run --collect` 最干净。
 
 雷达设备节点 `/dev/oradar`；底盘 MCU 串口 `/dev/myserial`（115200）。更多建图/导航/视觉功能包见 §3 与官方教程（§4）。
 
@@ -266,6 +288,7 @@ yahboom-rdk-x5/
     ├── rdk-x5-system-report.html              # SSH 实采的系统体检报告（离线可看）
     ├── rdk-x5-wifi-client-guide.html          # WiFi 客户端切换实机指南
     ├── rdk-x5-mipi-camera-preview-guide.html  # MIPI 相机预览排障指南
+    ├── lidar-live-viewer.html                 # MS200 雷达浏览器实时查看器（零依赖，见 §8.2）
     └── rdk-x5-official-experiments-and-advanced-practice.html
                                                # 官方实验取舍、进阶项目与 4090 端云推理路线
 ```
