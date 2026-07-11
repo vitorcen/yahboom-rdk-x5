@@ -12,17 +12,19 @@ const KEYMAP = {                                  // key -> [vx, vy, wz] sign
 };
 const keysDown = new Set();
 let keyTimer = null;
-const hint = $('hint'), hintIdle = hint.textContent;   // stats is redrawn 10 Hz by render(); use hint
 
 function keyTick() {
   let vx = 0, vy = 0, wz = 0;
   for (const k of keysDown) { const m = KEYMAP[k]; vx += m[0]; vy += m[1]; wz += m[2]; }
   pubTwist(Math.sign(vx)*KEY_LIN, Math.sign(vy)*KEY_LIN, Math.sign(wz)*KEY_ANG);
-  hint.textContent = '⌨️ 遥控中: ' + [...keysDown].join('+') + ' （松开＝停）';
+  $('iKey').firstElementChild.className = 'dot up';   // light the ⌨️ indicator
+  $('keyTxt').textContent = [...keysDown].map(k => k.replace('Arrow','')).join('+');
 }
 export function keyStop() {
   keysDown.clear();
-  if (keyTimer) { clearInterval(keyTimer); keyTimer = null; pubTwist(0,0,0); hint.textContent = hintIdle; }
+  if (keyTimer) { clearInterval(keyTimer); keyTimer = null; pubTwist(0,0,0); }
+  $('iKey').firstElementChild.className = 'dot';
+  $('keyTxt').textContent = '';
 }
 window.addEventListener('keydown', e => {
   if (S.page !== 'dash' || e.repeat) return;

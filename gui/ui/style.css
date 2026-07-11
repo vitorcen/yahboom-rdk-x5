@@ -17,14 +17,45 @@ button.mode, button.tab, button.lvl { background:#31344b; }
 button.mode.on, button.tab.on, button.lvl.on { background:#2b5c8a; }
 button.lvl { padding:3px 10px; font-size:12px; }
 #tabs { margin-left:auto; display:flex; gap:6px; }
+#power { display:flex; gap:6px; }
+button.pwr { background:#31344b; color:#8b93b5; padding:5px 10px; }
+button.pwr.arm { background:#a33; color:#fff; }
 main { flex:1; display:flex; flex-direction:column; min-height:0; }
 .page { flex:1; display:none; flex-direction:column; min-height:0; }
 .page.on { display:flex; }
 
-/* dashboard */
-#dashbar { padding:6px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:none; }
-#hint { font-size:12px; color:#8b93b5; }
-#stats { font-size:12px; color:#8b93b5; }
+/* status row — very first line of the window, visible on every tab */
+#statbar { padding:5px 14px 4px; display:flex; gap:12px; align-items:center;
+           flex-wrap:nowrap; overflow:hidden; flex:none; white-space:nowrap;
+           border-bottom:1px solid #1c2030; background:#0d111b; }
+/* dashboard controls row */
+#dashbar { padding:5px 14px; display:flex; gap:12px; align-items:center;
+           flex-wrap:nowrap; overflow:hidden; flex:none; white-space:nowrap; }
+.sep { width:1px; height:18px; background:#262b3d; flex:none; }
+.gauge { display:inline-flex; align-items:center; gap:5px; font-size:12px; }
+.gauge svg { display:block; }
+.gtxt { color:#8b93b5; font-variant-numeric:tabular-nums; }
+.glabel { color:#5d6485; font-size:10px; letter-spacing:.04em; }
+.ind { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:#5d6485; }
+.ind .dot { width:8px; height:8px; }
+.ind:has(.dot.up), .ind:has(.dot.nav) { color:#cdd6f4; }
+.dot.nav { background:#7ea6e0; }
+#keyTxt { color:#7ee2a8; font:11px ui-monospace,monospace; }
+#stats { margin-left:auto; font-size:11px; color:#5d6485; font-variant-numeric:tabular-nums; }
+#help { flex:none; width:18px; height:18px; border-radius:50%; background:#31344b;
+        color:#8b93b5; font-size:12px; display:inline-flex; align-items:center;
+        justify-content:center; cursor:help; user-select:none; margin-left:auto; }
+#toast { position:absolute; top:12px; left:50%; transform:translateX(-50%);
+         background:#1e2436ee; border:1px solid #31344b; border-radius:8px;
+         padding:6px 16px; font-size:13px; display:none; pointer-events:none; z-index:5; }
+#diag { position:absolute; inset:0; background:#0b0e1488; display:none;
+        align-items:center; justify-content:center; z-index:6; }
+#diagbox { background:#161a26; border:1px solid #31344b; border-radius:10px;
+           padding:16px 20px; width:420px; display:flex; flex-direction:column; gap:10px; }
+#diagout { font:13px/1.9 ui-monospace,Consolas,monospace; white-space:pre-wrap; }
+#diagout .ok { color:#7ee2a8; } #diagout .bad { color:#f38ba8; } #diagout .wrn { color:#f9e2af; }
+.diaghint { font-size:12px; color:#8b93b5; border-top:1px solid #262b3d; padding-top:8px; }
+.diagbtns { display:flex; gap:8px; }
 #cvwrap { flex:1; display:flex; min-height:0; min-width:0;
           overflow:hidden; padding:0 14px 10px; }
 #wrap { position:relative; flex:1; min-width:0; min-height:0; }

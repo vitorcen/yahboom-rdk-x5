@@ -26,9 +26,9 @@
 <p>
 <code>gui/</code> 是一个 Tauri 2 桌面应用：前端零依赖（<code>gui/ui/</code>：
 index.html 纯结构 + style.css + js/ 按职责拆模块——ros.js 连接与话题分发注册表、
-viewer.js 渲染与导航、camera.js 相机窗、teleop.js 键盘遥控、logs.js 日志页、
-main.js 装配；编译时嵌入二进制），后端是一层很薄的 Rust
-（3 个 async command，全部是 ssh 包装）。它与小车之间<b>只有两条通信通道</b>：
+viewer.js 渲染与导航、camera.js 相机窗、teleop.js 键盘遥控、health.js 仪表条、
+logs.js 日志页、main.js 装配；编译时嵌入二进制），后端是一层很薄的 Rust
+（8 个 async command：7 个 ssh 包装 + 1 个 ping 探活）。它与小车之间<b>只有两条通信通道</b>：
 <b>rosbridge WebSocket（ws://192.168.3.187:9090）</b>承载所有实时数据与控制指令，
 <b>SSH（192.168.3.187:22，免密公钥）</b>承载日志与服务状态查询。没有第三条。
 <br><span class="dim">Two channels only: rosbridge WebSocket (:9090) for all realtime
@@ -44,7 +44,7 @@ data & control; SSH (:22) for logs & service status.</span>
     <td><code>/map</code> (OccupancyGrid, 限流 1 s) + <code>/tf</code> <code>/tf_static</code> + <code>/plan</code></td><td>订阅 ←</td></tr>
 <tr><td>相机小窗（可拖动/等比拉伸）</td>
     <td><code>/image_jpeg</code> (CompressedImage, 限流 66 ms ≈ 15 fps, 板端硬编码 JPEG ≈46 KB/帧)</td><td>订阅 ←</td></tr>
-<tr><td>电量胶囊 🔋</td><td><code>/voltage</code> (Float32, 限流 5 s；2S 电池 8.4 V 满 / ≈7.6 V 蜂鸣)</td><td>订阅 ←</td></tr>
+<tr><td>仪表条：电池图示 🔋 + 状态灯（雷达/地图/相机/导航/⌨️）</td><td><code>/voltage</code> (Float32, 限流 5 s；2S 电池 8.4 V 满 / ≈7.6 V 蜂鸣)；状态灯按各话题新鲜度亮灭（/map 是 latched，按"已收到"判定），导航灯=/plan 活跃</td><td>订阅 ←</td></tr>
 <tr><td>拖线设导航目标</td><td><code>/goal_pose</code> (PoseStamped, frame=map)</td><td>发布 →</td></tr>
 <tr><td>■ 终止按钮</td><td>service <code>/navigate_to_pose/_action/cancel_goal</code>（零 uuid=全取消）+ 连发 5 帧零速 <code>/cmd_vel</code></td><td>调用/发布 →</td></tr>
 <tr><td>⌨️ 键盘遥控（WASD/方向键，Q/E 横移，空格急停）</td><td><code>/cmd_vel</code> (Twist, 按住 10 Hz 流, 0.15 m/s / 0.8 rad/s；mux 低优先级，手柄可随时压过；松键/失焦/切 Tab 即发零速)</td><td>发布 →</td></tr>
@@ -53,6 +53,10 @@ data & control; SSH (:22) for logs & service status.</span>
     <td><code>journalctl -u &lt;服务&gt;</code> / <code>dmesg</code>（服务名白名单，防注入）</td><td>拉取 ←</td></tr>
 <tr><td>侧栏服务状态点 ●</td><td><code>systemctl is-active</code> ×6 服务</td><td>拉取 ←</td></tr>
 <tr><td>侧栏板子状态（uptime/内存）</td><td><code>uptime</code> + <code>free -m</code></td><td>拉取 ←</td></tr>
+<tr><td>仪表条：SoC 温度 🌡 + CPU/RAM/HD 负载条</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td><code>cat hwmon0/temp1_input /proc/loadavg; nproc; free -m; df -BM /</code>（每 5 s；板上<b>无电流计</b>，功耗瓦数不可测，以温度/CPU 反映负载）</td><td>拉取 ←</td></tr>
+<tr><td>⟳ 重启 / ⏻ 关机按钮（两击确认，3 s 自动解除）</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td><code>systemctl reboot / poweroff</code>（action 白名单；实测重启：systemd 停 Nav2 栈约 1 min 后掉线，~20 s 回来，GUI 全自动恢复）</td><td>调用 →</td></tr>
+<tr><td>🎮 遥控检查按钮（自检面板 + 一键修复）</td><td><code>ssh root@192.168.3.187</code>（同上）</td><td>自检=pgrep 逐查 js0 设备 + joy_node/joy_ctrl/驱动/mux 进程 + 亚博 APP 串口冲突 + 服务状态（pgrep 不吃 DDS 发现竞态，比 <code>ros2 topic info</code> 可靠）；修复=<code>systemctl restart nav-bringup</code>，8 s/20 s 两段自动复检（节点拉起要 10-20 s）。面板附 SELECT 使能锁与欠压假故障提示</td><td>调用 →</td></tr>
+<tr><td>顶栏「主机在线」灯</td><td>本机 <code>ping -c1 -W1</code>（ICMP，每 3 s）</td><td>独立于 rosbridge——sshd/ROS 起来之前就能看到板子活没活。发电源命令后进入状态机：黄"重启中"直到观察到<b>掉线→回来</b>跳变才回绿（systemd 停 Nav2 栈约 1 min 内 ping 仍通，裸 ping 会误示"在线"）；关机则掉线后定格"已关机"</td><td>探测 ←</td></tr>
 <tr><td>顶栏「连接」按钮</td><td colspan="2">重建到 <code>ws://…:9090</code> 的 WebSocket；断线每 3 s 自动重连</td><td>—</td></tr>
 </table>
 

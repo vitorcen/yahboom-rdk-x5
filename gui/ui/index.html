@@ -6,12 +6,60 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="statbar">
+  <span class="gauge" id="gBatt" title="电池 2S 18650（8.4V 满 / 6.9V 空）">
+    <svg width="27" height="14" viewBox="0 0 27 14">
+      <rect x="1" y="1.5" width="22" height="11" rx="2.5" fill="none" stroke="#5d6485" stroke-width="1.5"/>
+      <rect x="24" y="4.5" width="2.5" height="5" rx="1" fill="#5d6485"/>
+      <rect id="battFill" x="3" y="3.5" width="0" height="7" rx="1" fill="#5d6485"/>
+    </svg><span id="battTxt" class="gtxt">--</span>
+  </span>
+  <span class="gauge" id="gTemp" title="SoC 温度（板上无电流计，功耗不可测，以温度/CPU 反映负载）">
+    🌡<span id="tempTxt" class="gtxt">--</span>
+  </span>
+  <span class="gauge" id="gCpu" title="CPU 负载（1min loadavg / 核数）">
+    <span class="glabel">CPU</span>
+    <svg width="30" height="14" viewBox="0 0 30 14">
+      <rect x="0.75" y="2.75" width="28.5" height="8.5" rx="2" fill="none" stroke="#5d6485" stroke-width="1.5"/>
+      <rect id="cpuFill" x="2.5" y="4.5" width="0" height="5" rx="1" fill="#7ea6e0"/>
+    </svg><span id="cpuTxt" class="gtxt">--</span>
+  </span>
+  <span class="gauge" id="gRam" title="内存 已用/总量">
+    <span class="glabel">RAM</span>
+    <svg width="30" height="14" viewBox="0 0 30 14">
+      <rect x="0.75" y="2.75" width="28.5" height="8.5" rx="2" fill="none" stroke="#5d6485" stroke-width="1.5"/>
+      <rect id="ramFill" x="2.5" y="4.5" width="0" height="5" rx="1" fill="#7ea6e0"/>
+    </svg><span id="ramTxt" class="gtxt">--</span>
+  </span>
+  <span class="gauge" id="gHd" title="根分区 已用/总量">
+    <span class="glabel">HD</span>
+    <svg width="30" height="14" viewBox="0 0 30 14">
+      <rect x="0.75" y="2.75" width="28.5" height="8.5" rx="2" fill="none" stroke="#5d6485" stroke-width="1.5"/>
+      <rect id="hdFill" x="2.5" y="4.5" width="0" height="5" rx="1" fill="#7ea6e0"/>
+    </svg><span id="hdTxt" class="gtxt">--</span>
+  </span>
+
+  <span class="sep"></span>
+
+  <span class="ind" id="iScan" title="/scan 雷达数据流"><span class="dot"></span>雷达</span>
+  <span class="ind" id="iMap"  title="/map 地图数据流"><span class="dot"></span>地图</span>
+  <span class="ind" id="iCam"  title="/image_jpeg 相机数据流"><span class="dot"></span>相机</span>
+  <span class="ind" id="iNav"  title="Nav2 导航（/plan 活跃＝导航中）"><span class="dot"></span><span id="navTxt">空闲</span></span>
+  <span class="ind" id="iKey"  title="键盘遥控 WASD/方向键·Q/E 横移·空格急停"><span class="dot"></span>⌨️<span id="keyTxt"></span></span>
+
+  <span id="stats"></span>
+</div>
 <header>
   <h1>RDK X5 控制台</h1>
   <input id="url" type="text" value="ws://192.168.3.187:9090">
   <button id="btn">连接</button>
   <span id="st" class="pill bad">未连接</span>
-  <span id="batt" class="pill" style="display:none"></span>
+  <span class="sep"></span>
+  <span id="power">
+    <button id="pReboot" class="pwr" title="重启小车主板（再点一次确认）">⟳ 重启</button>
+    <button id="pOff" class="pwr" title="关闭小车主板（再点一次确认；开机需按板上电源）">⏻ 关机</button>
+  </span>
+  <span id="host" class="pill" title="ICMP ping 探测，独立于 rosbridge——重启/关机时看板子生死" style="display:none">主机 --</span>
   <div id="tabs">
     <button class="tab on" data-page="dash">仪表盘</button>
     <button class="tab" data-page="logs">日志</button>
@@ -25,12 +73,26 @@
     <button id="mScan" class="mode">雷达</button>
     <button id="mMap"  class="mode on">地图</button>
     <button id="stop" style="background:#a33">■ 终止</button>
-    <span id="stats"></span>
-    <span id="hint">滚轮缩放 · 拖动＝设导航目标 · ■终止＝取消+刹停 · ⌨️ WASD/方向键=前后转向 Q/E=横移 空格=急停</span>
+    <button id="ctl" class="mode" title="检查手柄→mux→驱动链路，可一键重启底盘服务恢复">🎮 遥控检查</button>
+    <span id="help" title="滚轮＝缩放 · 地图上拖动＝设导航目标（方向＝拖动方向） · ■终止＝取消导航+刹停 · ⌨️ WASD/方向键=前后转向 Q/E=横移 空格=急停">?</span>
   </div>
   <div id="cvwrap">
     <div id="wrap">
       <canvas id="cv" width="1000" height="1000"></canvas>
+      <div id="toast"></div>
+      <div id="diag">
+        <div id="diagbox">
+          <b>🎮 遥控链路自检</b>
+          <div id="diagout">检查中…</div>
+          <div class="diaghint">手柄有电但车不动？先按手柄 <b>SELECT/BACK</b> 使能（Joy_active 开机默认关）。
+电池 ≤7.6 V 欠压会限电机+I2C 大面积报错，表现酷似"遥控坏了"——先看电池条，唯一解是充电。</div>
+          <div class="diagbtns">
+            <button id="diagfix">🔧 重启底盘服务</button>
+            <button id="diagre">↻ 重新检查</button>
+            <button id="diagclose" style="background:#31344b">关闭</button>
+          </div>
+        </div>
+      </div>
       <div id="cambox" title="拖动移动 · 右下角拉伸改大小"><img id="cam" alt="camera"><div id="camgrip"></div></div>
     </div>
   </div>

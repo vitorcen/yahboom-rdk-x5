@@ -3,6 +3,13 @@ import { $, S } from './state.js';
 import { onTopic, send, connected, cancelAllGoals, pubTwist } from './ros.js';
 
 const cv = $('cv'), cx = cv.getContext('2d'), stats = $('stats');
+let toastTimer = null;
+function toast(msg) {                 // transient action feedback over the canvas
+  const t = $('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.style.display = 'none', 2500);
+}
 let mode = 'map';
 let scanMsg = null, mapMsg = null, planMsg = null;
 let frames = 0, lastT = performance.now(), fps = 0;
@@ -124,8 +131,8 @@ function renderMap() {
     cx.strokeStyle = '#f9e2af'; cx.lineWidth = 2; cx.beginPath();
     cx.moveTo(goalDrag.x0, goalDrag.y0); cx.lineTo(goalDrag.x1, goalDrag.y1); cx.stroke();
   }
-  stats.textContent = `map ${g.width}×${g.height} @${g.resolution} m · ${fps.toFixed(1)} fps · zoom ${zoom.toFixed(1)}×`
-    + (pose ? ` · 位姿 (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)})` : ' · 等TF…');
+  stats.textContent = `${zoom.toFixed(1)}× · ${fps.toFixed(0)}fps`
+    + (pose ? ` · (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)})` : ' · 等TF…');
 }
 function renderScan() {
   const scan = scanMsg; if (!scan) { stats.textContent = '等 /scan…'; return; }
@@ -153,7 +160,7 @@ function renderScan() {
     cx.fillRect(cxp - Math.sin(a)*r/viewRange*R - 1.5, cyp - Math.cos(a)*r/viewRange*R - 1.5, 3, 3);
     n++;
   }
-  stats.textContent = `${n} 点 · ${fps.toFixed(1)} fps · 半径 ${viewRange} m`;
+  stats.textContent = `${n}点 · ${viewRange}m · ${fps.toFixed(0)}fps`;
 }
 
 // ---- goal drag / wheel zoom / modes / stop ----
@@ -172,7 +179,7 @@ cv.addEventListener('mousemove', e => {
 });
 cv.addEventListener('mouseup', () => {
   if (goalDrag && !connected()) {
-    stats.textContent = '⚠️ 未连接,目标没有发出'; goalDrag = null; render(); return;
+    toast('⚠️ 未连接，目标没有发出'); goalDrag = null; render(); return;
   }
   if (!goalDrag || !mapMsg) { goalDrag = null; return; }
   const t = w2c();
@@ -187,7 +194,7 @@ cv.addEventListener('mouseup', () => {
       header:{ frame_id:'map', stamp:{sec:0, nanosec:0} },
       pose:{ position:{x:gx, y:gy, z:0},
              orientation:{x:0, y:0, z:Math.sin(yaw/2), w:Math.cos(yaw/2)} } } })) return;
-    stats.textContent = `已终止旧目标，新目标 (${gx.toFixed(2)}, ${gy.toFixed(2)}, ${(yaw*180/Math.PI).toFixed(0)}°)`;
+    toast(`🎯 新目标 (${gx.toFixed(2)}, ${gy.toFixed(2)}, ${(yaw*180/Math.PI).toFixed(0)}°)，旧目标已终止`);
   }, 200);
 });
 cv.addEventListener('wheel', e => {
@@ -207,12 +214,12 @@ $('mScan').onclick = () => setMode('scan');
 $('mMap').onclick  = () => setMode('map');
 $('stop').onclick = () => {
   if (!connected()) {
-    stats.textContent = '⚠️ 未连接,终止没有发出!等待重连或检查小车'; return;
+    toast('⚠️ 未连接，终止没有发出！等待重连或检查小车'); return;
   }
   cancelAllGoals();
   planMsg = null;
   for (let i = 0; i < 5; i++) setTimeout(() => pubTwist(0,0,0), i*100);
-  stats.textContent = '已发送终止：取消导航目标 + 刹停';
+  toast('■ 已发送终止：取消导航目标 + 刹停');
 };
 
 // Canvas backing store follows its on-screen size; content stays proportional

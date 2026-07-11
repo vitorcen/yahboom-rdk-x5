@@ -1,0 +1,97 @@
+// Instrument bar: battery gauge, SoC temp + CPU load (ssh, Tauri only),
+// topic-freshness dots. The board has no current sensor, so real power (W)
+// is unreadable — temp/CPU stand in as the load indicators.
+import { $, invoke } from './state.js';
+import { onTopic, connected } from './ros.js';
+
+// ---- topic freshness -> dots ----
+const last = {};                                  // topic -> performance.now()
+let gotMap = false;                               // /map is latched: sent once on subscribe
+for (const t of ['/scan', '/map', '/image_jpeg', '/plan'])
+  onTopic(t, () => { last[t] = performance.now(); if (t === '/map') gotMap = true; });
+
+const dot = (id, cls) => { $(id).firstElementChild.className = 'dot' + (cls ? ' ' + cls : ''); };
+setInterval(() => {
+  const now = performance.now();
+  const fresh = (t, ms) => connected() && now - (last[t] || 0) < ms;
+  dot('iScan', fresh('/scan', 2000) && 'up');
+  dot('iMap',  connected() && gotMap && 'up');
+  dot('iCam',  fresh('/image_jpeg', 2000) && 'up');
+  const nav = fresh('/plan', 2500);              // Nav2 republishes /plan while navigating
+  dot('iNav', nav && 'nav');
+  $('navTxt').textContent = nav ? '导航中' : '空闲';
+  if (!connected()) { $('battTxt').textContent = '--'; $('battFill').setAttribute('width', 0); }
+}, 1000);
+
+// ---- battery (2S 18650: 8.4 V full, ~6.9 V empty; buzzer ≈7.6 V) ----
+onTopic('/voltage', m => {
+  const v = m.data;
+  const pct = Math.max(0, Math.min(100, Math.round((v - 6.9) / (8.4 - 6.9) * 100)));
+  const col = pct > 45 ? '#7ee2a8' : pct > 25 ? '#f9e2af' : '#f38ba8';
+  $('battFill').setAttribute('width', (19 * pct / 100).toFixed(1));
+  $('battFill').setAttribute('fill', col);
+  $('battTxt').textContent = `${pct}% ${v.toFixed(1)}V`;
+  $('battTxt').style.color = col;
+});
+
+// ---- SoC temp + CPU/RAM/HD via ssh (needs Tauri backend; hide in browser) ----
+function bar(fillId, txtId, pct, txt) {
+  $(fillId).setAttribute('width', (25.5 * Math.min(100, pct) / 100).toFixed(1));
+  $(fillId).setAttribute('fill', pct > 85 ? '#f38ba8' : pct > 60 ? '#f9e2af' : '#7ea6e0');
+  $(txtId).textContent = txt;
+}
+const gb = mb => (mb / 1024).toFixed(1).replace(/\.0$/, '');
+async function pollSys() {
+  try {
+    // lines: temp(m°C) / loadavg / nproc / "used total" mem MB / "used total" disk MB
+    const [tempLine, loadLine, ncLine, memLine, hdLine] =
+      (await invoke('sysinfo')).trim().split('\n');
+    const t = parseInt(tempLine) / 1000;
+    if (t > 0) {
+      $('tempTxt').textContent = t.toFixed(0) + '°C';
+      $('tempTxt').style.color = t > 75 ? '#f38ba8' : t > 65 ? '#f9e2af' : '#8b93b5';
+    }
+    const cpu = Math.round(parseFloat(loadLine) / (parseInt(ncLine) || 8) * 100);
+    bar('cpuFill', 'cpuTxt', cpu, Math.min(100, cpu) + '%');
+    const [mu, mt] = memLine.split(' ').map(Number);
+    bar('ramFill', 'ramTxt', mu / mt * 100, `${gb(mu)}/${gb(mt)}G`);
+    const [hu, ht] = hdLine.split(' ').map(Number);
+    bar('hdFill', 'hdTxt', hu / ht * 100, `${gb(hu)}/${gb(ht)}G`);
+  } catch { for (const i of ['tempTxt','cpuTxt','ramTxt','hdTxt']) $(i).textContent = '--'; }
+}
+if (invoke) { pollSys(); setInterval(pollSys, 5000); }
+else for (const g of ['gTemp','gCpu','gRam','gHd']) $(g).style.display = 'none';
+
+// ---- teleop-chain self check (🎮 button -> overlay; fix = restart bringup) ----
+const CTL_LABEL = {
+  js0: '手柄接收器 /dev/input/js0', joy_node: '手柄读取 joy_node',
+  joy_ctrl: '手柄映射 joy_ctrl', driver: '底盘驱动 Mcnamu_driver',
+  mux: 'cmd_vel 仲裁 mux', app_conflict: '亚博 APP 抢串口',
+  'nav-bringup': '底盘服务 nav-bringup',
+};
+async function ctlCheck() {
+  const out = $('diagout');
+  out.textContent = '检查中…';
+  try {
+    const lines = (await invoke('ctl_check')).trim().split('\n');
+    out.innerHTML = lines.map(l => {
+      const [key, ...rest] = l.split(' ');
+      const val = rest.join(' ');
+      const bad = /DEAD|MISSING|YES|inactive|failed/.test(val);
+      const cls = bad ? (key === 'app_conflict' ? 'wrn' : 'bad') : 'ok';
+      return `<span class="${cls}">${bad ? '✗' : '✓'} ${CTL_LABEL[key] || key}: ${val}</span>`;
+    }).join('\n');
+  } catch (e) { out.innerHTML = `<span class="bad">检查失败: ${e}</span>`; }
+}
+$('ctl').onclick = () => { $('diag').style.display = 'flex'; ctlCheck(); };
+$('diagre').onclick = ctlCheck;
+$('diagclose').onclick = () => $('diag').style.display = 'none';
+$('diagfix').onclick = async () => {
+  const out = $('diagout');
+  out.textContent = '正在重启 nav-bringup（驱动+手柄+mux 一起拉起）…';
+  try { await invoke('ctl_fix'); } catch (e) { out.textContent = '重启失败: ' + e; return; }
+  out.textContent = '已重启，等节点拉起后自动复检…';
+  setTimeout(ctlCheck, 8000);       // early peek: js0/joy_node come up first
+  setTimeout(ctlCheck, 20000);      // final: driver/mux need 10-20 s to spawn
+};
+if (!invoke) $('ctl').style.display = 'none';   // browser mode: no ssh backend

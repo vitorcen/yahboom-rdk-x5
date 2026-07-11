@@ -26,11 +26,20 @@ metadata:
 - 当前启动行为：tros 预览为手工后台启动，未配置 systemd 自启；重启后亚博 XFCE APP 会恢复自启。详见 `docs/rdk-x5-mipi-camera-preview-guide.html`。
 - 模式切换：`camera_mode.sh` 支持 `tros`、`yahboom` 和 `hybrid`。hybrid 用 control-only 包装器保留亚博 TCP 6000 遥控，由 TogetheROS 独占 CSI0 并在 8000 提供视频。
 
-**桌面 GUI（2026-07-11）**：`gui/` Tauri 2 应用（`./gui/run.sh` 一键编译启动，需
+**桌面 GUI（2026-07-11）**：`gui/` Tauri 2 应用（单例=tauri-plugin-single-instance，
+二次启动聚焦已有窗口；`./gui/run.sh` 一键编译启动，需
 libwebkit2gtk-4.1-dev），前端已拆模块：ui/index.html 纯结构 + style.css + js/{state,ros,
-viewer,camera,teleop,logs,main}.js，ros.js 的 onTopic() 注册表分发话题。仪表盘=viewer
+viewer,camera,teleop,health,logs,main}.js，ros.js 的 onTopic() 注册表分发话题。仪表盘=viewer
 全功能+相机窗拖动/等比拉伸+**键盘遥控**（WASD/方向键→/cmd_vel 0.15 m/s，Q/E 横移，
-空格=急停，走 mux 低优先级、手柄可压过；失焦/切 Tab 自动刹停），日志 Tab=/rosout 实时
+空格=急停，走 mux 低优先级、手柄可压过；失焦/切 Tab 自动刹停）+**单行仪表条**（health.js：
+SVG 电池、SoC 温度+CPU/RAM/HD 负载条走 ssh sysinfo 每 5s、话题新鲜度状态灯——注意 /map 是
+latched 只发一次要按"已收到"判定；**板上无电流计，功耗瓦数不可测**，温度/CPU 代之；操作
+提示收进 ? 悬停，动作反馈用画布 toast）+**电源按钮**（⟳重启/⏻关机，两击确认 3s 自动解除，
+后端 systemctl 白名单；顶栏"主机在线"灯=本机 ping 每 3s，独立于 rosbridge 可观测开关机过程。
+实测重启：systemd 停 Nav2 栈约 1min 才掉线、~20s 回来，GUI 全自动恢复）+**🎮 遥控自检**
+（pgrep 查 js0/joy_node/joy_ctrl/驱动/mux/APP 冲突——pgrep 不吃 DDS 发现竞态；一键
+restart nav-bringup 修复，节点拉起要 10-20s 所以 8s/20s 两段复检。实测当场抓到驱动
+I2C 崩溃重生间隙，7.6V 欠压区崩溃频发与 [[rdk-x5-nav2-plan]] 教训 6 印证），日志 Tab=/rosout 实时
 +ssh journalctl（async command 必须 spawn_blocking 否则冻 UI；改 ui/ 需 build.rs
 rerun-if-changed 触发重编）。架构文档 `docs/rdk-x5-gui-architecture.html`。坑：雷达 USB
 会重枚举致驱动假活（重启 ms200-lidar 恢复）；xdotool 合成点击要先 windowactivate --sync，
