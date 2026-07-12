@@ -2,7 +2,7 @@
 // topic-freshness dots. The board has no current sensor, so real power (W)
 // is unreadable — temp/CPU stand in as the load indicators.
 import { $, invoke } from './state.js';
-import { onTopic, connected } from './ros.js';
+import { onTopic, connected, send } from './ros.js';
 
 // ---- topic freshness -> dots ----
 const last = {};                                  // topic -> performance.now()
@@ -95,6 +95,12 @@ $('diagfix').onclick = async () => {
   setTimeout(ctlCheck, 20000);      // final: driver/mux need 10-20 s to spawn
 };
 if (!invoke) $('ctl').style.display = 'none';   // browser mode: no ssh backend
+
+// ---- Safety-brake switch: safety_stop (C++) owns the state (boot = ON).
+// GUI and gamepad both just publish a toggle and mirror the latched
+// /safety_enabled broadcast — pure rosbridge, works in browser mode too ----
+onTopic('/safety_enabled', m => $('mSafety').classList.toggle('on', m.data));
+$('mSafety').onclick = () => send({ op:'publish', topic:'/safety_toggle', msg:{} });
 
 // ---- Follow-me switch: systemd enable/disable on the board, so the choice
 // is remembered and survives both GUI restarts and board reboots ----

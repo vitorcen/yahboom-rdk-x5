@@ -7,6 +7,8 @@
 > 传感器布局：顶部 ORADAR MS200 激光雷达（360° / 10 Hz）；车头 IMX219 MIPI 相机（斜向上装，
 > 看人脸和上身）；四轮麦克纳姆轮（全向移动）。
 
+![RDK X5 Robot](docs/images/car.jpg)
+
 **接入 / 冷启动 / WiFi / VNC / 相机预览**等环境配置已拆到
 👉 [`docs/setup.md`](docs/setup.md)。日常 `ssh root@192.168.3.187`，开机自启全套服务，直接做实验。
 
@@ -20,6 +22,7 @@
 | 雷达/相机/底盘打通 + 浏览器仪表盘 | ✅ | [`docs/lidar-live-viewer.html`](docs/lidar-live-viewer.html) |
 | Cartographer 建图 + Nav2 自主导航 | ✅ | §2，参数 `board/home/sunrise/nav_config/` |
 | cmd_vel 安全仲裁 + 驱动崩溃自愈 | ✅ | §2.2 事故复盘 |
+| 激光急刹 safety_stop（rclcpp） | ✅ 实测 | §2.3，[`board/home/sunrise/ros2_ws/src/safety_stop/`](board/home/sunrise/ros2_ws/src/safety_stop/) |
 | **Follow-me 相机+雷达融合跟随** | ✅ 实测可用 | §3，[`docs/rdk-x5-follow-me-fusion.html`](docs/rdk-x5-follow-me-fusion.html) |
 | 桌面控制台 GUI（Tauri） | ✅ | §1，[`docs/rdk-x5-gui-architecture.html`](docs/rdk-x5-gui-architecture.html) |
 | 官方实验取舍与进阶路线（4090 端云推理） | 📝 规划 | [`docs/rdk-x5-official-experiments-and-advanced-practice.html`](docs/rdk-x5-official-experiments-and-advanced-practice.html) |
@@ -77,7 +80,8 @@ unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，
 ### 2.2 cmd_vel 安全仲裁与事故复盘（重要）
 
 - **仲裁 mux**（[`board/home/sunrise/nav_config/cmd_vel_mux.py`](board/home/sunrise/nav_config/cmd_vel_mux.py)，自研）：
-  三优先级 `/cmd_vel_joy`(手柄) > `/cmd_vel_follow`(跟随) > `/cmd_vel`(Nav2) 汇入 → `/cmd_vel_drv` → 驱动。
+  三优先级 `/cmd_vel_joy`(手柄) > `/cmd_vel_follow`(跟随) > `/cmd_vel`(Nav2) 汇入 → `/cmd_vel_mux`
+  → §2.3 激光急刹 → `/cmd_vel_drv` → 驱动。
   导航/跟随中动手柄立即接管，松手 0.5 s 恢复；**空闲时持续发零速**（10 Hz）；
   另带**方向感知雷达护栏**：沿运动方向 ±30° 扇区取最近障碍，按余量线性限速，无有效数据视为堵死。
 - **事故复盘**：亚博 `Mcnamu_driver` 的 RGB 灯 I2C 写入无异常保护，按手柄键可致
@@ -89,6 +93,25 @@ unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，
 - **systemd 坑**：厂商 `cam-service` 单元 `After=multi-user.target` 又 `WantedBy=multi-user.target`，
   任何 `After=cam-service` 的服务都会构成依赖环 → **开机静默丢弃 job（无日志）**。
 - **电量**：`/voltage`（2S 18650，满 8.4 V；≈7.6 V 扩展板蜂鸣报警+限电机）。GUI 顶栏显示百分比。
+
+### 2.3 激光急刹 safety_stop / Lidar safety brake（rclcpp，实测 ✅）
+
+自研 C++ 节点 [`board/home/sunrise/ros2_ws/src/safety_stop/`](board/home/sunrise/ros2_ws/src/safety_stop/)，
+串在仲裁 mux 与驱动之间（`/cmd_vel_mux` → safety_stop → `/cmd_vel_drv`），
+过滤**最终输出**——手柄、跟随、Nav2 一视同仁：
+
+- **净空比例限速，不是固定阈值急停**：沿运动方向 ±30° 雷达扇区取最近障碍，
+  允许速度 = (净空 − 0.30 m) / 0.5，0.30 m 处归零。快=提前从 ~0.8 m 外开始压速度，
+  慢=几乎无感。实测固定 30 cm 阈值在 1.0 m/s 全速下刹不住（10 Hz 雷达延迟+惯性滑行），
+  比例限速全速冲墙可停。
+- **方向感知,永不锁死**：前进查前方、倒车查后方、横移查侧方（MS200 360°）；
+  背离障碍物的方向永远放行,被拦住后直接反向开走。原地旋转不拦。
+- **fail-open**：雷达挂了放行不拦（手柄不能陪葬），日志告警；
+  无人监督的跟随通道在 mux 层另有 fail-close 护栏兜底。
+- **运行时开关**：开机默认开；GUI 顶栏 `🛡 急刹` 拨钮或手柄按键发 `/safety_toggle` 翻转，
+  状态经 latched `/safety_enabled` 广播（节点持有状态,各处只发翻转+镜像显示,单一机制）。
+  切换蜂鸣反馈：**开=滴滴两短,关=长滴一声**（走驱动 `/Buzzer` 话题）。
+- 板上 `~/ros2_ws` colcon 编译；由 `nav-bringup` 启动、respawn 自愈；阈值/增益是 ROS 参数。
 
 ---
 

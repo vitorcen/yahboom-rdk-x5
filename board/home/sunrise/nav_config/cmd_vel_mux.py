@@ -2,8 +2,8 @@
 """cmd_vel priority mux + watchdog + follow guard (seed of cmd_vel_guard).
 
   /cmd_vel_joy    (HIGH, joystick)       \
-  /cmd_vel_follow (MID,  follow-me)       > /cmd_vel_drv -> Mcnamu_driver
-  /cmd_vel        (LOW,  Nav2/keyboard)  /
+  /cmd_vel_follow (MID,  follow-me)       > /cmd_vel_mux -> safety_stop (C++)
+  /cmd_vel        (LOW,  Nav2/keyboard)  /                    -> /cmd_vel_drv -> Mcnamu_driver
 
 Rules:
 - A message from a source is forwarded unless a higher-priority source has
@@ -41,7 +41,7 @@ RANGE_VALID = 0.05            # ranges <= this are sensor artifacts (0.0 / nan)
 class CmdVelMux(Node):
     def __init__(self):
         super().__init__('cmd_vel_mux')
-        self.pub = self.create_publisher(Twist, '/cmd_vel_drv', 10)
+        self.pub = self.create_publisher(Twist, '/cmd_vel_mux', 10)
         for prio, topic in enumerate(['/cmd_vel_joy', '/cmd_vel_follow', '/cmd_vel']):
             self.create_subscription(
                 Twist, topic, lambda m, p=prio: self.arbitrate(p, m), 10)

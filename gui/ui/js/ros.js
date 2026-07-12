@@ -45,10 +45,13 @@ export function connect() {
     sub('/image_jpeg', 'sensor_msgs/CompressedImage', 66);
     sub('/hobot_hand_gesture_detection', 'ai_msgs/msg/PerceptionTargets', 100);
     sub('/voltage', 'std_msgs/Float32', 5000);
+    sub('/safety_enabled', 'std_msgs/Bool');   // latched by safety_stop
     sub('/rosout', 'rcl_interfaces/msg/Log');
     ws.send(JSON.stringify({ op:'advertise', topic:'/goal_pose', type:'geometry_msgs/PoseStamped' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel', type:'geometry_msgs/Twist' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel_joy', type:'geometry_msgs/Twist' }));
+    ws.send(JSON.stringify({ op:'advertise', topic:'/safety_toggle', type:'std_msgs/Empty' }));
+    ws.send(JSON.stringify({ op:'advertise', topic:'/Buzzer', type:'std_msgs/Bool' }));
   };
   ws.onclose = () => { st.textContent = '已断开,3s后重连…'; st.className = 'pill bad';
                        $('dot-rosout').className = 'dot down';

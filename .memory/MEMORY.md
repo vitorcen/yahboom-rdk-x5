@@ -4,4 +4,5 @@
 - [Follow-me 融合跟随](rdk-x5-follow-me.md) — 相机+雷达双通道实测可用;矢量速度/运动判别认腿/GUI systemd 开关;6 条实战教训
 - [手柄遥控重写](rdk-x5-gamepad-teleop.md) — 厂商锁存根因;无状态 joy_teleop;实测键位表(扳机轴陷阱);GUI 全域急停
 - [麦轮横移故障(未解决)](rdk-x5-strafe-weak-rear.md) — 固件图案正确,后轮扭矩弱;待前后对调定位;strafe_test.ipynb 诊断
+- [激光急刹 safety_stop](rdk-x5-safety-stop.md) — rclcpp 净空比例限速(固定阈值高速必撞);A键/GUI开关;蜂鸣约定;Y键全停
 - [提交纪律](feedback-atomic-commits.md) — 迭代不提交,功能稳定后原子提交;碎提交软回退合并

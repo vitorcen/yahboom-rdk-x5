@@ -3,8 +3,9 @@
 #   1. our stateless joy_teleop publishes /cmd_vel_joy (vendor yahboom_joy dropped)
 #   2. Mcnamu_driver listens on /cmd_vel_drv, fed only by cmd_vel_mux
 # Topology:  joy -> joy_teleop -> /cmd_vel_joy (HIGH) \
-#                       follow-me -> /cmd_vel_follow (MID) > mux -> /cmd_vel_drv -> driver
+#                       follow-me -> /cmd_vel_follow (MID) > mux -> /cmd_vel_mux
 #                     Nav2/keyboard -> /cmd_vel (LOW) /
+#            /cmd_vel_mux -> safety_stop (C++ lidar brake) -> /cmd_vel_drv -> driver
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -74,9 +75,18 @@ def generate_launch_description():
         output='screen', respawn=True, respawn_delay=1.0,
     )
 
+    # Last-resort lidar brake between mux and driver (rclcpp, ~/ros2_ws).
+    # Direction-aware: blocks motion INTO an obstacle closer than stop_dist,
+    # always lets the robot drive away. Fail-open if the lidar dies.
+    safety_node = ExecuteProcess(
+        cmd=['/home/sunrise/ros2_ws/install/safety_stop/lib/safety_stop/safety_stop',
+             '--ros-args', '-p', 'stop_dist:=0.30'],
+        output='screen', respawn=True, respawn_delay=1.0,
+    )
+
     return LaunchDescription([
         pub_odom_tf_arg,
         driver_node, base_node, imu_filter_node, ekf_node,
         joy_node, joy_teleop_node, description_node,
-        mux_node,
+        mux_node, safety_node,
     ])

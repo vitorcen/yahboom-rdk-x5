@@ -21,13 +21,23 @@ on-board with multi-second key holds — never trust convention here:
   axes[7]/axes[6] D-pad hat (up/left = +1) -> slow fwd/strafe nudge
   buttons[3] X key -> strafe LEFT at KEY_V   (operator request)
   buttons[1] B key -> strafe RIGHT at KEY_V
+  buttons[0] A key -> toggle the lidar safety brake (/safety_toggle;
+          the MODE key is a pad-local analog/digital hardware switch that
+          never reaches /joy AND remaps the sticks — unusable, do not press;
+          buttons[6] is L1, not SELECT as the vendor code suggested)
+  buttons[4] Y key -> stop-all, same as the GUI stop button: cancel the
+          Nav2 goal, disable follow-me, hold the bus with zeros for ~2 s
   axes[4]/axes[5] are trigger axes that REST at +1.0 — never map them;
           doing so commands a permanent creep (found the hard way).
 """
+import subprocess
+
 import rclpy
 from rclpy.node import Node
+from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Joy
+from std_msgs.msg import Bool, Empty
 
 DEADZONE = 0.2      # vendor value; also swallows drift below it
 ZERO_BURST = 3      # stop twists sent after release before going silent
@@ -36,18 +46,53 @@ VY_MAX = 1.0
 WZ_MAX = 5.0        # rad/s
 DPAD_V = 0.3        # m/s, slow nudge speed for the D-pad hat
 KEY_V = 0.3         # m/s, fixed strafe speed for the X/B keys
+SAFETY_BTN = 0      # A key: toggle the safety brake (rising edge)
+STOP_BTN = 4        # Y key: stop-all (rising edge)
+STOP_ZEROS = 40     # ~2 s of zeros at the 20 Hz joy autorepeat: holds the
+                    # mux top priority while the Nav2 cancel takes effect
 
 
 class JoyTeleop(Node):
     def __init__(self):
         super().__init__('joy_teleop')
         self.pub = self.create_publisher(Twist, '/cmd_vel_joy', 10)
+        self.pub_toggle = self.create_publisher(Empty, '/safety_toggle', 10)
+        self.cancel_cli = self.create_client(
+            CancelGoal, '/navigate_to_pose/_action/cancel_goal')
+        self.pub_beep = self.create_publisher(Bool, '/Buzzer', 10)
+        self.beep_timer = None
         self.create_subscription(Joy, '/joy', self.on_joy, 10)
         self.zeros_left = 0
+        self.safety_btn_prev = 0
+        self.stop_btn_prev = 0
+
+    def stop_all(self):
+        """Same contract as the GUI stop button: kill every motion source."""
+        self.zeros_left = STOP_ZEROS
+        self.pub.publish(Twist())
+        if self.cancel_cli.service_is_ready():
+            self.cancel_cli.call_async(CancelGoal.Request())  # cancel all goals
+        subprocess.Popen(['systemctl', 'disable', '--now', 'follow-me'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.pub_beep.publish(Bool(data=True))   # one long beep = stop-all
+        if self.beep_timer:
+            self.beep_timer.cancel()
+        self.beep_timer = self.create_timer(0.6, self.beep_off)
+        self.get_logger().info('stop-all: goals cancelled, follow off, braking')
+
+    def beep_off(self):
+        self.beep_timer.cancel()
+        self.pub_beep.publish(Bool(data=False))
 
     def on_joy(self, joy):
-        if len(joy.axes) < 8 or len(joy.buttons) < 4:
+        if len(joy.axes) < 8 or len(joy.buttons) < 7:
             return
+        if joy.buttons[SAFETY_BTN] and not self.safety_btn_prev:
+            self.pub_toggle.publish(Empty())
+        self.safety_btn_prev = joy.buttons[SAFETY_BTN]
+        if joy.buttons[STOP_BTN] and not self.stop_btn_prev:
+            self.stop_all()
+        self.stop_btn_prev = joy.buttons[STOP_BTN]
         t = Twist()
         t.linear.x = self.scale(joy.axes[1], VX_MAX) + joy.axes[7] * DPAD_V
         t.linear.y = (self.scale(joy.axes[2], VY_MAX)

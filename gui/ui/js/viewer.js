@@ -215,7 +215,7 @@ $('mScan').onclick = () => setMode('scan');
 $('mMap').onclick  = () => setMode('map');
 $('stop').onclick = () => {
   if (!connected()) {
-    toast('⚠️ 未连接，终止没有发出！等待重连或检查小车'); return;
+    toast('⚠️ 未连接，全停没有发出！等待重连或检查小车'); return;
   }
   cancelAllGoals();
   planMsg = null;
@@ -223,9 +223,12 @@ $('stop').onclick = () => {
   // follow-me and Nav2 instantly; /cmd_vel zeros would lose to follow.
   for (let i = 0; i < 8; i++) setTimeout(() => pubTwist(0,0,0,'/cmd_vel_joy'), i*80);
   const followStopped = followOff();   // kill the chase, not just this twitch
+  // one long beep = stop-all, same audible contract as the gamepad Y key
+  send({ op:'publish', topic:'/Buzzer', msg:{ data:true } });
+  setTimeout(() => send({ op:'publish', topic:'/Buzzer', msg:{ data:false } }), 600);
   toast(followStopped
-    ? '■ 已终止：取消导航 + 关闭跟随 + 最高优先级刹停'
-    : '■ 已终止：取消导航 + 刹停（浏览器模式无法关跟随，请注意）');
+    ? '🛑 已全停：取消导航 + 关闭跟随 + 最高优先级刹停'
+    : '🛑 已全停：取消导航 + 刹停（浏览器模式无法关跟随，请注意）');
 };
 
 // Canvas backing store follows its on-screen size; content stays proportional
