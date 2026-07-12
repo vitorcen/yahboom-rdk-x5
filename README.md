@@ -1,263 +1,64 @@
-# RDK X5 Robot（亚博 Yahboom 版）
+# RDK X5 Robot 实验记录 / Experiments
 
-亚博（Yahboom）出品的 **RDK X5 ROBOT** 智能小车实验记录。搭载地平线 D-Robotics
-RDK X5 主控（8 核 Cortex-A55 + BPU AI 加速），带 **MIPI 相机** 和 **激光雷达**，
-预装 Ubuntu 22.04 + ROS2 Humble + TogetheROS（tros）。
+亚博（Yahboom）**RDK X5 ROBOT** 麦克纳姆轮小车上的机器人实验：自主导航、
+相机+雷达融合跟随、自研桌面控制台。主控为地平线 D-Robotics **RDK X5**
+（8×Cortex-A55 + 10TOPS BPU），预装 Ubuntu 22.04 + ROS2 Humble + TogetheROS（tros）。
 
-> **系统体检报告**：详见 [`docs/rdk-x5-system-report.html`](docs/rdk-x5-system-report.html)
-> （单文件、内嵌 SVG、可离线浏览）——由 SSH 实地采集生成。
->
-> **专题实机指南**（离线可看）：
-> - WiFi 客户端切换：[`docs/rdk-x5-wifi-client-guide.html`](docs/rdk-x5-wifi-client-guide.html)
-> - MIPI 相机预览：[`docs/rdk-x5-mipi-camera-preview-guide.html`](docs/rdk-x5-mipi-camera-preview-guide.html)
-> - 官方实验取舍、进阶项目与 4090 端云推理路线：[`docs/rdk-x5-official-experiments-and-advanced-practice.html`](docs/rdk-x5-official-experiments-and-advanced-practice.html)
+> 传感器布局：顶部 ORADAR MS200 激光雷达（360° / 10 Hz）；车头 IMX219 MIPI 相机（斜向上装，
+> 看人脸和上身）；四轮麦克纳姆轮（全向移动）。
+
+**接入 / 冷启动 / WiFi / VNC / 相机预览**等环境配置已拆到
+👉 [`docs/setup.md`](docs/setup.md)。日常 `ssh root@192.168.3.187`，开机自启全套服务，直接做实验。
 
 ---
 
-## 0. 快速上手（冷启动）/ Getting started from scratch
+## 实验一览 / Experiments at a glance
 
-> 刚拿到板子、换了台新电脑、或不确定板子现在什么状态，从这里开始。
-> New machine / no context? Start here.
-
-### 0.1 你的电脑先装好 / Host prerequisites
-
-| 用途 | 工具 | 备注 |
+| 实验 | 状态 | 入口 / 文档 |
 | --- | --- | --- |
-| SSH 登录 | `ssh`（自带）；`sshpass`（可选，免交互输密码） | `sudo apt install sshpass` |
-| 远程桌面 | 任意 VNC viewer（Remmina / RealVNC / TigerVNC） | 连 §6 的 `:5900` |
-| 相机 / Jupyter 预览 | 浏览器 | 直连板子 IP，见 §1 |
-
-### 0.2 板子现在是哪种模式？先判断 / Which mode is the board in?
-
-板子只有两种上网姿态，**先搞清楚现在是哪种**，否则连不上：
-
-1. **客户端模式（当前默认）**：板子作为 WiFi 客户端接入家里路由器 `YOUR_WIFI_SSID_5G`。
-   - 前提：**你的电脑必须连在同一个路由器/局域网**（`192.168.3.x` 网段），否则 `192.168.3.187` 根本 ping 不通。
-   - 连接：`ssh root@192.168.3.187`（密码 `yahboom`）。
-2. **AP 热点模式（出厂/异地兜底）**：板子自己发 WiFi 热点。**换环境、不在家里网络时用这个**。
-   - 你的电脑连 WiFi `RDK_X5_Robot`（密码 `12345678`）。
-   - 连接：`ssh root@192.168.8.88`（密码 `yahboom`）。
-   - 想让板子切回客户端模式接新路由器，见 §5 `wifi_client.sh`。
-
-### 0.3 连不上 / IP 找不到怎么办 / Can't reach the board
-
-客户端模式下 IP 由路由器 DHCP 分配（**会变**，除非像本机一样在路由器后台做了静态绑定）。板子失联时：
-
-```bash
-# 方法 A：路由器后台找这台板子的租约（板子网卡 MAC = 18:ce:df:79:2e:8b）
-# 方法 B：在与板子同网段的电脑上扫 ARP
-ping -b 192.168.3.255 -c 3 2>/dev/null; ip neigh | grep -i '18:ce:df:79:2e:8b'
-# 方法 C：彻底失联 → 断电重启板子回到能连的模式；或用 HDMI+键鼠直接上桌面看 IP
-```
-
-> ⚠️ 板载 OLED 屏只显示时间/内存等状态，**不显示 IP**，别指望它给地址。
-
-### 0.4 登录后环境已就绪 / Environment is pre-sourced
-
-板子的 `~/.bashrc`（root 和 sunrise 都）已自动 `source` 好 tros + 两个工作空间，并设 `ROS_DOMAIN_ID=99`。
-**SSH 上去直接就能敲 `ros2 ...`，不用手动 source。** 若要在你的电脑上跑 ROS2 与板子通信，域号也要设成 `99`。
-
-### 0.5 重刷机后一键恢复 / Restore after reflash
-
-仓库 `board/` 目录按板子真实路径 1:1 镜像所有部署文件（脚本 + 自启服务）。刷完新系统后在电脑上跑：
-
-```bash
-scripts/deploy_board.sh [板子IP]     # rsync board/ → 板子 / ，并 enable 雷达+rosbridge 自启
-```
+| 系统体检与硬件拓扑 | ✅ | [`docs/rdk-x5-system-report.html`](docs/rdk-x5-system-report.html) |
+| 雷达/相机/底盘打通 + 浏览器仪表盘 | ✅ | [`docs/lidar-live-viewer.html`](docs/lidar-live-viewer.html) |
+| Cartographer 建图 + Nav2 自主导航 | ✅ | §2，参数 `board/home/sunrise/nav_config/` |
+| cmd_vel 安全仲裁 + 驱动崩溃自愈 | ✅ | §2.2 事故复盘 |
+| **Follow-me 相机+雷达融合跟随** | ✅ 实测可用 | §3，[`docs/rdk-x5-follow-me-fusion.html`](docs/rdk-x5-follow-me-fusion.html) |
+| 桌面控制台 GUI（Tauri） | ✅ | §1，[`docs/rdk-x5-gui-architecture.html`](docs/rdk-x5-gui-architecture.html) |
+| 官方实验取舍与进阶路线（4090 端云推理） | 📝 规划 | [`docs/rdk-x5-official-experiments-and-advanced-practice.html`](docs/rdk-x5-official-experiments-and-advanced-practice.html) |
 
 ---
 
-## 1. 板子接入信息 / Access
+## 1. 桌面控制台 GUI（Tauri 自研）
 
-> **当前状态（2026-07）**：板子已切到 **WiFi 客户端模式**，连家里路由器（5G），
-> 路由器绑定了**静态 IP `192.168.3.187`**。日常用 `ssh root@192.168.3.187`（密码 `yahboom`）。
-> 下面的 `192.168.8.88` 是 **AP 热点模式**下的地址，跑 `wifi_ap.sh` 切回热点时才用。
+`gui/` 下的跨平台桌面应用（Tauri + rosbridge websocket），把散落的浏览器页面收敛成一个控制台：
+地图/雷达/相机三层叠加、拖线下发导航目标、手柄遥控自检、跟随开关、重启/关机电源键、
+状态栏（电量/温度/CPU/内存/硬盘 + 各话题活性灯）。
 
-| 项目 | 值 |
-| --- | --- |
-| **当前 IP（client 模式）** | `192.168.3.187`（路由器静态绑定，5G）|
-| **AP 模式 IP** | `192.168.8.88`（跑 `wifi_ap.sh` 切回热点时）|
-| **SSH 用户 / 密码** | `root` / `yahboom` |
-| **自带热点 SSID / 密码** | `RDK_X5_Robot` / `12345678` |
-| 板载普通用户 | `sunrise`（Yahboom 机器人代码在此账户下） |
+**仪表盘**：地图（AMCL 定位，绿色箭头为车）+ 雷达点云（粉色）+ 相机画中画（含手势检测框叠加）。
+顶栏 `🧍 跟随` 滑块开关直接 enable/disable 板上 `follow-me.service`，重启小车依然生效：
 
-```bash
-# 当前（client 模式）
-ssh root@192.168.3.187         # 密码 yahboom
-```
+![GUI 仪表盘](docs/images/gui-dashboard.jpg)
 
-其他常用入口（当前 IP）：
+**系统 Tab**：实机核实的硬件拓扑 + ROS2 软件栈框图（节点按出身着色：上游/tros/亚博/自研），
+右侧汇总 systemd 自启服务与程序/配置落盘位置——新人看这一屏就知道整车软件怎么组织：
 
-| 服务 | 地址 | 说明 |
-| --- | --- | --- |
-| JupyterLab | `http://192.168.3.187:8888` | 官方交互式教程 / 例程 |
-| VNC (x11vnc) | `192.168.3.187:5900` | 远程桌面，**密码 `123456`**（已配置）|
-| 相机 Web 预览 | `http://192.168.3.187:8000` | tros websocket（需先接好相机，见 §7）|
+![GUI 系统拓扑](docs/images/gui-system.jpg)
+
+架构细节（进程模型、rosbridge 订阅清单、离线降级）见
+[`docs/rdk-x5-gui-architecture.html`](docs/rdk-x5-gui-architecture.html)。
 
 ---
 
-## 2. 硬件速览 / Hardware at a glance
+## 2. 建图与 Nav2 自主导航（2026-07-11 实机验证 ✅）
 
-| 部件 | 规格 |
-| --- | --- |
-| 主控 | 地平线 **RDK X5 V1.0**（Board Id 302） |
-| CPU | 8 × ARM **Cortex-A55** @ 最高 1.5 GHz（aarch64） |
-| AI 加速 | **BPU**（Bayes-e 架构）@ 1 GHz |
-| GPU | Vivante **GC8000** @ 1 GHz |
-| 内存 | **6.5 GiB** LPDDR4（4266 MT/s） |
-| 存储 | 64 GB SD/TF 卡（`/dev/mmcblk1`）·  **UHS-I SDR104**，实测顺序读 **≈68 MB/s** |
-| WiFi/BT | **AIC8800**（aic8800_fdrv） |
-| 相机 | **MIPI CSI** 摄像头（hobot VIN/ISP 通路） |
-| 激光雷达 | **ORADAR**（奥比中光）→ `/dev/oradar`（CH340, USB 1a86:55d4） |
-| 底盘 MCU | 串口 `/dev/myserial`（CH340, USB 1a86:7523，115200） |
-| 扩展 | CAN 总线（m_can/tcan4x5x）、40-pin GPIO、I2C ×8 |
+- **建图**：`yahboomcar_nav` 的 cartographer 链（`map_cartographer_launch.py`），存图
+  `ros2 run nav2_map_server map_saver_cli -f /home/sunrise/maps/room`。当前用图 `room.yaml`。
+- **导航**：`navigation_dwb_launch.py`（Nav2 + AMCL + DWB），调优参数
+  `/home/sunrise/maps/nav_params_tuned.yaml`：`robot_radius 0.1→0.13`、膨胀半径
+  `0.12/0.2→0.35`（否则贴着桌腿擦过去必撞）、限速 `0.26→0.18`。
+- **交互**：GUI 或浏览器 viewer 里**拖一条线**即下发目标（起点=位置，方向=朝向），红色"终止"取消。
 
----
+### 2.1 开机自启服务（板上 6 个）
 
-## 3. 软件栈 / Software
-
-- **OS**：Ubuntu 22.04.5 LTS，内核 **6.1.83** aarch64，RDK OS **3.0.0**（SD 卡 v1.0.0 / 20241206）
-- **ROS**：ROS2 **Humble** + **tros-humble 2.3.0**（地平线 TogetheROS）
-- **机器人工作空间**：`/home/sunrise/yahboomcar_ws`（建图/导航/视觉/巡线/多机等 20+ 功能包）
-- **雷达驱动**：`/home/sunrise/software/library_ws`（`oradar_lidar`）
-- **底盘 SDK**：`/home/sunrise/sunriseRobot`
-
----
-
-## 4. 在线资料 / Vendor docs
-
-- 官方教程：<https://www.yahboom.com/study/RDK-X5-ROBOT>
-- 资料获取密码：`ntrc`
-
----
-
-## 5. WiFi 模式切换脚本 / WiFi mode scripts
-
-板子默认是 **AP 热点模式**（发射 `RDK_X5_Robot`，`hostapd` + `dhcpd`，自身 IP 192.168.8.88）。
-以下脚本已部署到板子 `/home/sunrise/scripts/`（仓库 `board/home/sunrise/scripts/` 内留有同版本副本，按板子真实路径镜像）：
-
-| 脚本 | 作用 |
-| --- | --- |
-| `wifi_client.sh` | 切到**客户端模式**，默认连接路由器 `YOUR_WIFI_SSID_5G`。家庭 WiFi 密码不写入仓库，运行时交互输入。内置国家码修复+扫描重试，连接失败会**自动回滚到 AP 模式**，防止锁死。 |
-| `wifi_ap.sh` | **恢复 AP 热点模式**（`RDK_X5_Robot` / `12345678` / 192.168.8.88）。 |
-| `wifi_diag.sh` | 诊断：底层 `iw scan`（绕过 NM）列出可见 AP、标出 5GHz 与目标 SSID，跑完自动恢复 AP。 |
-
-### ⚠️ 踩坑记录：连 5G 路由器扫不到 / Connecting to a 5 GHz router
-
-**根因**：板载 WiFi 芯片 **AIC8800D80** 的国家码是驱动**模块参数**，出厂 `country_code=00`（world）
-且 `custregd=Y`（自定义管制域，**忽略内核 `iw reg set`**）。world 模式下 5GHz 频段受限，
-**扫不到任何 5G AP**。经宿主机实测，`YOUR_WIFI_SSID_5G` 是纯 5GHz（信道 44 / 5220 MHz），
-所以板子一直扫不到、连接失败回滚。
-
-**修法**（已内置进 `wifi_client.sh`）：写 `/etc/modprobe.d/aic8800.conf`
-设 `options aic8800_fdrv country_code=CN custregd=N`，并重载 `aic8800_fdrv` 驱动使其生效。
-另外，厂商 AP 镜像默认 mask 了 `wpa_supplicant.service`；切换客户端模式时必须先解除
-mask 并启动该服务，否则 NetworkManager 会把 `wlan0` 标记为 `unavailable`，所有扫描都为空。
-厂商 XFCE 自启动项 `Open_AP.desktop` 还会在每次登录时再次开启热点；client 脚本会禁用它，
-AP 脚本则会恢复它，从而让所选模式在重启后保持一致。
-2.4GHz 路由器不受国家码问题影响，但同样需要可用的 `wpa_supplicant`。
-
-```bash
-# 切客户端（运行后静默提示输入密码）
-sudo /home/sunrise/scripts/wifi_client.sh
-
-# 也可临时指定其他网络；注意命令行明文密码可能进入 shell 历史
-sudo /home/sunrise/scripts/wifi_client.sh "SSID" "PASS"
-
-# 恢复出厂 AP 热点
-sudo /home/sunrise/scripts/wifi_ap.sh
-```
-
-> ⚠️ **切客户端会断开当前 AP 连接**：板子离开自己的热点、加入目标路由器后，
-> 通过 `192.168.8.88` 的 SSH 会断。请到路由器后台看新 IP（板子 MAC `18:ce:df:79:2e:8b`）再重连；
-> 想恢复热点，请在仍可访问板子时运行 `wifi_ap.sh`；恢复成功后，后续重启会继续保持 AP 模式。
->
-> **回连热点的完整步骤**：① 电脑连 WiFi `RDK_X5_Robot`（密码 `12345678`）→ ② `ssh root@192.168.8.88`（密码 `yahboom`）。
-
----
-
-## 6. VNC 远程桌面 / VNC
-
-板子出厂自带 **x11vnc**（`x11vnc.service`，开机自启，共享 HDMI 的 XFCE 桌面）。已把密码设为 `123456`。
-
-| 项 | 值 |
-| --- | --- |
-| 地址 | `192.168.3.187:5900`（display `:0`）|
-| 密码 | `123456` |
-| 改密码 | `x11vnc -storepasswd <新密码> /etc/.vnc/passwd && systemctl restart x11vnc` |
-
----
-
-## 7. MIPI 相机预览 / Camera preview
-
-**预览不用 VNC**，本机浏览器直连即可，三选一：`:8000`（tros websocket）/ `:80`（原厂 sunrise_camera）/ `:8888`（jupyter 例程）。
-统一切换脚本 `camera_mode.sh` 支持 `tros`、`yahboom`、`hybrid`、`status`。`hybrid` 让 TogetheROS 独占 CSI0 提供视频，同时以 control-only 包装器运行亚博底盘和 TCP 6000 遥控。`camera_preview.sh` 是 tros 便捷入口，`camera_yahboom.sh` 是完整亚博 APP 便捷入口。
-
-### 一键预览 / Quick start
-
-```bash
-ssh root@192.168.3.187                                   # 先登录板子
-sudo /home/sunrise/scripts/camera_mode.sh tros      # 切到 tros 预览模式
-# 然后你电脑浏览器打开：  http://192.168.3.187:8000
-```
-
-`camera_mode.sh` 用法：`sudo camera_mode.sh tros|yahboom|hybrid|status`
-—— `tros` 给 web 预览，`yahboom` 交回亚博手机 APP，`hybrid` 视频给 tros + 保留底盘遥控，`status` 看当前谁在用相机。
-
-> tros 和亚博 APP 对 CSI0 **互斥**——不能同时独占相机，所以切换前脚本会自动停掉另一方（`hybrid` 例外，见上）。
-
-### 已验证：IMX219 位于 CSI0，能够出图
-
-诊断实测（2026-07）：
-
-- 相机是 **Sony IMX219**（读到芯片 ID `0x0219`，红灯亮=供电正常，I2C 通信正常）——**相机没坏、排线没坏、不需额外供电**
-- 当前已在 **CSI0 / `i2c-6`** 扫到 IMX219 地址 `0x10`，官方 API 成功抓取 1920×1080 NV12 图像。
-- tros `/image_raw` 实测约 **30 FPS**，浏览器预览监听 `http://192.168.3.187:8000`。
-- `cam-service` 是 ISP/VSE 的 `/dev/isc` 后台中间件，必须保持 active；停止它会导致 `hbn_vnode_set_attr ... ret(-10)`。
-- 亚博桌面自启的 `app_SunriseRobot.py` 会独占 CSI0，启动 tros 前必须先停止它（`camera_mode.sh tros` 已自动处理）。
-- 相机画面实测偏暗；若现场并非暗环境，检查镜头是否被遮挡或保护膜是否仍在。
-- 完整排障过程见 [`docs/rdk-x5-mipi-camera-preview-guide.html`](docs/rdk-x5-mipi-camera-preview-guide.html)。
-
----
-
-## 8. 让车动 & 看雷达 / Drive the chassis & read the LiDAR
-
-> 以下命令都在**板子上**跑（SSH 登录后环境已 source 好，见 §0.4）。可执行入口经实机 `ros2 pkg executables` 核实。
-
-### 8.1 遥控车子跑起来 / Teleop
-
-开**两个** SSH 终端：
-
-```bash
-# 终端 A：启动麦克纳姆轮底盘驱动（订阅 /cmd_vel 驱动电机）
-ros2 run yahboomcar_bringup Mcnamu_driver
-
-# 终端 B：键盘遥控（按键发布 /cmd_vel）
-ros2 run yahboomcar_ctrl yahboom_keyboard      # 手柄则用 yahboom_joy
-```
-
-> ⚠️ **安全**：一敲方向键车就真的会动。先把小车架空或留足空间，避免冲下桌。
-> 底盘另有标定/巡逻入口：`yahboomcar_bringup` 下还有 `calibrate_linear` / `calibrate_angular` / `patrol`。
-
-### 8.2 看雷达 / LiDAR（2026-07-11 实机验证 ✅）
-
-实测结论 / Verified: `/scan` 稳定 **10 Hz**，360°，量程 0.15–20 m，frame `lidar_link`。
-
-```bash
-# 只发布 /scan 数据（无图形界面，SSH 即可）
-ros2 launch oradar_lidar ms200_scan.launch.py
-
-# 雷达 + gmapping 建图
-ros2 launch oradar_lidar ms200_scan_gmapping.launch.py
-```
-
-> ❌ **rviz2 在板端桌面必崩**：`ms200_scan_view.launch.py` 里的 rviz2 在板子 X 上稳定
-> SEGV（Ogre/GL 栈问题；root/sunrise、`LIBGL_ALWAYS_SOFTWARE=1`、`QT_X11_NO_MITSHM=1`
-> 全试过，约 6 秒必崩）。**看画面走浏览器方案**，别浪费时间在 VNC + rviz2 上。
-
-**推荐：浏览器实时画面 / Live view in browser（rosbridge，已验证）**
-
-板上已装 **5 个开机自启**服务（unit 文件在仓库 `board/etc/systemd/system/`，重启实测通过）：
+unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，重启实测通过：
 
 | 服务 | 作用 |
 |---|---|
@@ -266,80 +67,102 @@ ros2 launch oradar_lidar ms200_scan_gmapping.launch.py
 | `mipi-cam` | 相机 `/image_jpeg`（等 ISP 就绪再起，防开机竞态） |
 | `nav-bringup` | 底盘驱动 + 里程计/EKF + 手柄 + cmd_vel 仲裁 mux |
 | `nav2` | AMCL + 规划器 + 控制器（自动喂初始位姿；无目标不动车） |
+| `follow-me` | BPU 感知 ×3 + 融合跟随节点（GUI 开关控制，见 §3） |
 
 ```bash
-# 开机即全量：浏览器打开 docs/lidar-live-viewer.html → 地图+相机+雷达+电量；拖线=导航
-# 手柄遥控：按 SELECT/BACK 使能（亚博使能锁每次开机复位），推杆即走
 # 换地图/重喂定位：sudo bash /home/sunrise/nav_config/nav_start.sh [map.yaml]
 # 重刷机后恢复：在电脑上跑 scripts/deploy_board.sh（rsync board/ 镜像 + enable 服务）
 ```
 
-### 8.3 自动导航（Nav2）与安全仲裁（2026-07-11 实机验证 ✅）
+### 2.2 cmd_vel 安全仲裁与事故复盘（重要）
 
-- **建图**：`yahboomcar_nav` 的 cartographer 链（`map_cartographer_launch.py`），存图
-  `ros2 run nav2_map_server map_saver_cli -f /home/sunrise/maps/room`。当前用图 `room.yaml`。
-- **导航**：`navigation_dwb_launch.py`（Nav2 + AMCL + DWB），调优参数
-  `/home/sunrise/maps/nav_params_tuned.yaml`：`robot_radius 0.1→0.13`、膨胀半径
-  `0.12/0.2→0.35`（否则贴着桌腿擦过去必撞）、限速 `0.26→0.18`。
-- **cmd_vel 仲裁 + 看门狗**（`board/home/sunrise/nav_config/cmd_vel_mux.py`，自研 50 行）：
-  手柄 `/cmd_vel_joy`(优先) 与 Nav2 `/cmd_vel` 汇入 mux → `/cmd_vel_drv` → 驱动。
-  导航中动手柄立即接管，松手 0.5 s 导航恢复；**空闲时持续发零速**（10 Hz）。
-- **事故复盘（重要）**：亚博 `Mcnamu_driver` 的 RGB 灯 I2C 写入无异常保护,按手柄键可致
+- **仲裁 mux**（[`board/home/sunrise/nav_config/cmd_vel_mux.py`](board/home/sunrise/nav_config/cmd_vel_mux.py)，自研）：
+  三优先级 `/cmd_vel_joy`(手柄) > `/cmd_vel_follow`(跟随) > `/cmd_vel`(Nav2) 汇入 → `/cmd_vel_drv` → 驱动。
+  导航/跟随中动手柄立即接管，松手 0.5 s 恢复；**空闲时持续发零速**（10 Hz）；
+  另带**方向感知雷达护栏**：沿运动方向 ±30° 扇区取最近障碍，按余量线性限速，无有效数据视为堵死。
+- **事故复盘**：亚博 `Mcnamu_driver` 的 RGB 灯 I2C 写入无异常保护，按手柄键可致
   **驱动进程崩死 → MCU 持续执行最后一条非零速度 → ROS 层任何停车手段全部失效**。
-  修复=驱动 `respawn=True` + mux 空闲零速流,实测行驶中 `kill -9` 驱动 ≈1.5 s 内自动刹停。
-  浏览器"终止"按钮**不是急停**——WiFi 断了它就是块砖;真急停=手柄使能键/拎车/电源开关。
+  修复=驱动 `respawn=True` + mux 空闲零速流，实测行驶中 `kill -9` 驱动 ≈1.5 s 内自动刹停。
+  浏览器/GUI 的"终止"按钮**不是急停**——WiFi 断了它就是块砖；真急停=手柄使能键/拎车/电源开关。
 - **手机 APP 与导航互斥**：亚博 APP 直写底盘串口（不走 ROS），与驱动并存会双写抢串口导致
   车抽搐。其 XFCE 自启已禁（`Start APP Program.desktop` 置 `Hidden=true`，改回即恢复原厂）。
-- **踩坑**：厂商 `cam-service` 单元 `After=multi-user.target` 又 `WantedBy=multi-user.target`，
-  任何 `After=cam-service` 的服务都会构成依赖环 → **systemd 开机静默丢弃 job（无日志）**；
-  `ros2 topic pub --once` 会在 DDS 发现完成前发完退出（消息丢失），要加 `-w 1` 等订阅者。
-- **电量**：`/voltage`（2S 18650，满 8.4 V；≈7.6 V 扩展板蜂鸣报警+限电机）。viewer 顶栏显示百分比。
-
-坑位记录 / Pitfalls（都踩实过）：
-- **systemd-run 必须给 `HOME`**（或 `ROS_LOG_DIR`），否则 rcl 日志初始化 abort：
-  `failed to configure logging: Failed to get logging directory`。
-- **SSH 里 `pkill -f ms200_scan` 会杀掉自己的远程 shell**（命令行自匹配 → exit 255 无输出），
-  用正则括号避开：`pkill -f "ms200_[s]can"`。
-- 后台起 launch 别用裸 `&`（挂住 SSH stdout），用 `systemd-run --collect` 最干净。
-
-雷达设备节点 `/dev/oradar`；底盘 MCU 串口 `/dev/myserial`（115200）。更多建图/导航/视觉功能包见 §3 与官方教程（§4）。
+- **systemd 坑**：厂商 `cam-service` 单元 `After=multi-user.target` 又 `WantedBy=multi-user.target`，
+  任何 `After=cam-service` 的服务都会构成依赖环 → **开机静默丢弃 job（无日志）**。
+- **电量**：`/voltage`（2S 18650，满 8.4 V；≈7.6 V 扩展板蜂鸣报警+限电机）。GUI 顶栏显示百分比。
 
 ---
 
-## 9. 目录结构 / Repo layout
+## 3. Follow-me：相机 + 雷达融合跟随（实测可用 ✅）
+
+自研 rclpy 节点 [`board/home/sunrise/follow/follow_me.py`](board/home/sunrise/follow/follow_me.py)，
+对着相机 **👌 OK 手势**锁定主人开始跟随（滴滴短鸣），**✋ 手掌**停止（长鸣一声）。
+核心思路：**两条观测通道常开并行，不做模式切换**——
+
+| 通道 | 传感器 | 提供什么 | 频率 |
+| --- | --- | --- | --- |
+| 身份通道 | 相机 + BPU（mono2d 人体检测 / 手势识别） | 是谁（track_id）、方位角、轮廓尺度 | ~30 FPS |
+| 几何通道 | MS200 雷达腿聚类 | 精确距离与方位（360°，含车后） | 10 Hz |
+
+单一控制环 10–40 Hz 融合两者：相机新鲜时用相机方位角，暗了（转身/出视野/1 m 内仰角丢人）
+无缝落到雷达腿跟踪；雷达门限用相机方位锚定或按腿速度外推。关键设计：
+
+- **认腿=运动判别**：桌腿/凳腿尺寸上与人腿不可分，唯一可靠特征是"会动"。
+  用 `/odom` 把雷达聚类换算到**世界系**抵消自身运动——新咬合要求该位置 1.2 s 前是空的，
+  持有中若 3 s 世界系静止且相机也黑，判定跟错了家具，放弃。
+- **麦轮矢量速度**：速度向量 `vx=v·cosθ, vy=v·sinθ` 直指主人（不等车头转过去），
+  同时 PD 转向（比例 + 方位变化率前馈）高频把车头甩向主人；直行 0.5 m/s，
+  角度越大越加速，斜向最高 0.8 m/s。
+- **丢失恢复**：短暂丢失（<10 s）主人回到视野即自动"滴滴"重锁；两通道全黑 2.5 s 才停车。
+- **安全**：跟随速度同样过 §2.2 的 mux 雷达护栏与手柄抢占；感知超时 3 s 强制刹停。
+
+启动链 [`follow_start.sh`](board/home/sunrise/follow/follow_start.sh) 拉起 3 个 tros BPU 感知节点
+（人体检测→手部关键点→手势分类，全程 BPU 推理，单帧 ~10 ms）+ 融合节点，由
+`follow-me.service` 管理，GUI 滑块一键启停并持久化。
+
+算法细节（门限参数、状态机、手势投票、踩坑六条）见
+👉 [`docs/rdk-x5-follow-me-fusion.html`](docs/rdk-x5-follow-me-fusion.html)。
+
+---
+
+## 4. 硬件速览 / Hardware at a glance
+
+| 部件 | 规格 |
+| --- | --- |
+| 主控 | 地平线 **RDK X5 V1.0**（8×Cortex-A55 @1.5 GHz + BPU Bayes-e 10TOPS，6.5 GiB LPDDR4） |
+| 相机 | Sony **IMX219** MIPI CSI0，1080P @30FPS，斜向上安装 |
+| 激光雷达 | **ORADAR MS200** 360° 10 Hz，0.15–20 m（`/dev/oradar`） |
+| 底盘 | 麦克纳姆轮 ×4 + STM32 扩展板（串口 `/dev/myserial`，含 IMU/电池管理） |
+| 其他 | AIC8800 WiFi/BT、OLED 状态屏、2.4G 手柄接收器、40-pin GPIO |
+
+完整体检（存储/总线/内核模块/温度）见 [`docs/rdk-x5-system-report.html`](docs/rdk-x5-system-report.html)。
+
+---
+
+## 5. 目录结构 / Repo layout
 
 ```
-yahboom-rdk-x5/
-├── README.md                       # 本文件
+RDK-experience/
+├── README.md                       # 本文件：实验记录主线
 ├── CLAUDE.md / AGENTS.md           # 给 AI 协作工具的项目说明
 ├── .memory/                        # 跨工具持久记忆（协议 SKILL.md + 索引 + 事实）
 ├── board/                          # 板端文件 1:1 镜像（路径与板子一致，重刷机后一键恢复）
-│   ├── etc/systemd/system/         #   自启服务（5 个，见 §8.2）
-│   │   ├── ms200-lidar.service     #     → 雷达驱动（发布 /scan）
-│   │   ├── rosbridge.service       #     → websocket 桥（ws://:9090）
-│   │   ├── mipi-cam.service        #     → 相机（等 ISP 就绪，防竞态/依赖环，见 §8.3）
-│   │   ├── nav-bringup.service     #     → 底盘+手柄+cmd_vel 仲裁 mux
-│   │   └── nav2.service            #     → Nav2 导航栈（自动喂初始位姿）
-│   ├── home/sunrise/nav_config/    #   导航自定义件
-│   │   ├── bringup_mux_launch.py   #     → 带仲裁的底盘 bringup（驱动 respawn）
-│   │   ├── cmd_vel_mux.py          #     → 优先级仲裁+看门狗（cmd_vel_guard 种子）
-│   │   └── nav_start.sh            #     → 换地图/重喂 AMCL 一键脚本
-│   ├── home/sunrise/.config/autostart/  # 亚博 APP 自启已置 Hidden=true（§8.3）
-│   └── home/sunrise/scripts/  #   板端脚本（与板子同版本）
-│       ├── wifi_client.sh          #     → 客户端模式（连路由器，失败自动回滚 AP）
-│       ├── wifi_ap.sh              #     → 恢复 AP 热点模式
-│       ├── wifi_diag.sh            #     → WiFi 扫描诊断（底层 iw，绕过 NM）
-│       ├── camera_mode.sh          #     → 相机模式切换（tros | yahboom | hybrid | status）
-│       ├── camera_preview.sh       #     → tros 相机 Web 预览便捷入口（:8000）
-│       ├── camera_yahboom.sh       #     → 切回完整亚博 APP 相机模式便捷入口
-│       └── yahboom_control_only.py #     → hybrid 模式的 control-only 包装器
-├── scripts/                        # 主机侧工具（在你电脑上跑）
-│   └── deploy_board.sh             #   → 重刷机一键恢复：rsync board/ → 板子 / + enable 服务
+│   ├── etc/systemd/system/         #   自启服务 unit ×6（§2.1）
+│   ├── home/sunrise/nav_config/    #   导航自定义件（bringup/mux/nav_start）
+│   ├── home/sunrise/follow/        #   Follow-me 融合跟随（follow_me.py + follow_start.sh）
+│   └── home/sunrise/scripts/       #   WiFi 切换 / 相机模式切换等板端脚本
+├── gui/                            # 桌面控制台（Tauri + rosbridge，§1）
+│   ├── src-tauri/                  #   Rust 后端（ssh 命令、服务开关、单实例）
+│   └── ui/                         #   前端（地图/雷达/相机叠加、系统拓扑图）
+├── scripts/                        # 主机侧工具
+│   └── deploy_board.sh             #   重刷机一键恢复：rsync board/ → 板子 / + enable 服务
 └── docs/
-    ├── rdk-x5-system-report.html              # SSH 实采的系统体检报告（离线可看）
+    ├── setup.md                    # 接入/冷启动/WiFi/VNC/相机预览（从本文件拆出）
+    ├── images/                     # 实拍与截图
+    ├── rdk-x5-follow-me-fusion.html           # Follow-me 融合算法详解
+    ├── rdk-x5-gui-architecture.html           # GUI 架构
+    ├── rdk-x5-system-report.html              # 系统体检报告
+    ├── lidar-live-viewer.html                 # 浏览器实时仪表盘（GUI 的前身，仍可独立用）
     ├── rdk-x5-wifi-client-guide.html          # WiFi 客户端切换实机指南
     ├── rdk-x5-mipi-camera-preview-guide.html  # MIPI 相机预览排障指南
-    ├── lidar-live-viewer.html                 # 浏览器实时仪表盘：地图/雷达/相机/电量/拖线导航/终止（§8.2-8.3）
-    └── rdk-x5-official-experiments-and-advanced-practice.html
-                                               # 官方实验取舍、进阶项目与 4090 端云推理路线
+    └── rdk-x5-official-experiments-and-advanced-practice.html   # 进阶路线
 ```
