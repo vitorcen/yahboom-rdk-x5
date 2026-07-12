@@ -12,8 +12,11 @@ export function send(obj) {
   ws.send(JSON.stringify(obj));
   return true;
 }
-export function pubTwist(vx, vy, wz) {
-  return send({ op:'publish', topic:'/cmd_vel',
+// Default topic is /cmd_vel (LOW mux priority: physical joystick outranks
+// keyboard teleop by design). The stop button brakes via /cmd_vel_joy (HIGH)
+// so it preempts follow-me and Nav2 too.
+export function pubTwist(vx, vy, wz, topic = '/cmd_vel') {
+  return send({ op:'publish', topic,
     msg:{ linear:{x:vx,y:vy,z:0}, angular:{x:0,y:0,z:wz} } });
 }
 export function cancelAllGoals() {
@@ -45,6 +48,7 @@ export function connect() {
     sub('/rosout', 'rcl_interfaces/msg/Log');
     ws.send(JSON.stringify({ op:'advertise', topic:'/goal_pose', type:'geometry_msgs/PoseStamped' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel', type:'geometry_msgs/Twist' }));
+    ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel_joy', type:'geometry_msgs/Twist' }));
   };
   ws.onclose = () => { st.textContent = '已断开,3s后重连…'; st.className = 'pill bad';
                        $('dot-rosout').className = 'dot down';

@@ -104,15 +104,24 @@ async function followRefresh() {
     $('mFollow').classList.toggle('on', active);
   } catch { /* board unreachable: keep last look */ }
 }
+async function setFollow(on) {
+  $('mFollow').disabled = true;
+  $('mFollow').classList.toggle('on', on);       // optimistic; refresh corrects
+  try { await invoke('follow_set', { on }); }
+  catch { $('mFollow').classList.toggle('on', !on); }
+  finally { $('mFollow').disabled = false; setTimeout(followRefresh, 4000); }
+}
+
+// Stop-button helper: force follow-me off. Returns false in browser mode
+// (no ssh backend), where the caller should warn that follow stays enabled.
+export function followOff() {
+  if (!invoke) return false;
+  if ($('mFollow').classList.contains('on')) setFollow(false);
+  return true;
+}
+
 if (invoke) {
   followRefresh();
   setInterval(followRefresh, 10000);
-  $('mFollow').onclick = async () => {
-    const on = !$('mFollow').classList.contains('on');
-    $('mFollow').disabled = true;
-    $('mFollow').classList.toggle('on', on);     // optimistic; refresh corrects
-    try { await invoke('follow_set', { on }); }
-    catch { $('mFollow').classList.toggle('on', !on); }
-    finally { $('mFollow').disabled = false; setTimeout(followRefresh, 4000); }
-  };
+  $('mFollow').onclick = () => setFollow(!$('mFollow').classList.contains('on'));
 } else $('mFollow').style.display = 'none';

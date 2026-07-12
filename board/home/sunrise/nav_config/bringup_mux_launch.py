@@ -1,10 +1,10 @@
-# Chassis bringup with cmd_vel arbitration (twist_mux).
+# Chassis bringup with cmd_vel arbitration.
 # Replaces vendor yahboomcar_bringup_launch.py (kept untouched) with two changes:
-#   1. yahboom_joy publishes /cmd_vel_joy instead of /cmd_vel
-#   2. Mcnamu_driver listens on /cmd_vel_drv, fed only by twist_mux
-# Topology:  joy -> /cmd_vel_joy (prio 100) \
-#                                            > twist_mux -> /cmd_vel_drv -> driver
-#            Nav2/keyboard -> /cmd_vel (prio 10) /
+#   1. our stateless joy_teleop publishes /cmd_vel_joy (vendor yahboom_joy dropped)
+#   2. Mcnamu_driver listens on /cmd_vel_drv, fed only by cmd_vel_mux
+# Topology:  joy -> joy_teleop -> /cmd_vel_joy (HIGH) \
+#                       follow-me -> /cmd_vel_follow (MID) > mux -> /cmd_vel_drv -> driver
+#                     Nav2/keyboard -> /cmd_vel (LOW) /
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -49,11 +49,16 @@ def generate_launch_description():
             get_package_share_directory('robot_localization'), 'launch'), '/ekf.launch.py'])
     )
 
-    joy_node = Node(package='joy', executable='joy_node')
-    yahboom_joy_node = Node(
-        package='yahboomcar_ctrl',
-        executable='yahboom_joy',
-        remappings=[('cmd_vel', '/cmd_vel_joy')],
+    # Whole joy chain respawns: a dead link here means no manual override.
+    joy_node = Node(package='joy', executable='joy_node',
+                    respawn=True, respawn_delay=1.0)
+    # Own stateless teleop (see joy_teleop.py) instead of vendor yahboom_joy:
+    # its Joy_active latch boots OFF (gamepad dead until an unlock button)
+    # and, once ON, streams zeros that hold the mux and starve follow/Nav2.
+    from launch.actions import ExecuteProcess
+    joy_teleop_node = ExecuteProcess(
+        cmd=['python3', os.path.join(os.path.dirname(__file__), 'joy_teleop.py')],
+        output='screen', respawn=True, respawn_delay=1.0,
     )
 
     description_node = IncludeLaunchDescription(
@@ -64,15 +69,14 @@ def generate_launch_description():
 
     # Own 50-line mux with watchdog (ros-humble-twist-mux unavailable on the
     # tuna mirror; ours also brakes on command silence — twist_mux does not).
-    from launch.actions import ExecuteProcess
     mux_node = ExecuteProcess(
         cmd=['python3', os.path.join(os.path.dirname(__file__), 'cmd_vel_mux.py')],
-        output='screen',
+        output='screen', respawn=True, respawn_delay=1.0,
     )
 
     return LaunchDescription([
         pub_odom_tf_arg,
         driver_node, base_node, imu_filter_node, ekf_node,
-        joy_node, yahboom_joy_node, description_node,
+        joy_node, joy_teleop_node, description_node,
         mux_node,
     ])

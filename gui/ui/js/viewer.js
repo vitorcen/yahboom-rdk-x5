@@ -1,6 +1,7 @@
 // Dashboard: TF / map / scan rendering, goal drag, stop button, mode toggle.
 import { $, S } from './state.js';
 import { onTopic, send, connected, cancelAllGoals, pubTwist } from './ros.js';
+import { followOff } from './health.js';
 
 const cv = $('cv'), cx = cv.getContext('2d'), stats = $('stats');
 let toastTimer = null;
@@ -218,8 +219,13 @@ $('stop').onclick = () => {
   }
   cancelAllGoals();
   planMsg = null;
-  for (let i = 0; i < 5; i++) setTimeout(() => pubTwist(0,0,0), i*100);
-  toast('■ 已发送终止：取消导航目标 + 刹停');
+  // Brake on /cmd_vel_joy (HIGHEST mux priority): zeros here preempt
+  // follow-me and Nav2 instantly; /cmd_vel zeros would lose to follow.
+  for (let i = 0; i < 8; i++) setTimeout(() => pubTwist(0,0,0,'/cmd_vel_joy'), i*80);
+  const followStopped = followOff();   // kill the chase, not just this twitch
+  toast(followStopped
+    ? '■ 已终止：取消导航 + 关闭跟随 + 最高优先级刹停'
+    : '■ 已终止：取消导航 + 刹停（浏览器模式无法关跟随，请注意）');
 };
 
 // Canvas backing store follows its on-screen size; content stays proportional
