@@ -15,9 +15,11 @@ Rules:
   (real incident: vendor driver died in an unguarded I2C write while moving).
 - Follow guard: /cmd_vel_follow is the only source with neither a human in
   the loop nor its own obstacle avoidance (Nav2 has costmaps, joy/keys have
-  eyes), so forward motion requires a fresh /scan AND a clear front sector;
-  reverse is always denied. Lidar yaw is 0 vs base_link, so scan angle 0 is
-  straight ahead and the front sector wraps across the 0/2pi seam.
+  eyes). The follower drives the mecanum base as a velocity VECTOR (vx, vy),
+  so the guard checks the lidar sector AROUND THE MOTION DIRECTION: speed is
+  limited in proportion to the clearance found there, and a sector with no
+  valid return counts as blocked (the MS200 reports 0.0 in its dead zone and
+  on absorbing surfaces). vx < 0 stays denied. Lidar yaw is 0 vs base_link.
 """
 import math
 
@@ -30,7 +32,8 @@ from sensor_msgs.msg import LaserScan
 HOLD = 0.5        # a source keeps control this long after its last message
 TIMEOUT = 0.5     # total command silence -> brake
 SCAN_FRESH = 0.4  # /scan older than this -> follow may not move forward
-FRONT_STOP = 0.35             # m, required clearance ahead for follow forward
+FRONT_STOP = 0.35             # m, clearance below this stops follow forward
+CLEAR_GAIN = 0.3              # s, speed limit = (clearance - FRONT_STOP) / this
 FRONT_HALF = math.radians(30) # half-angle of the guarded front sector
 RANGE_VALID = 0.05            # ranges <= this are sensor artifacts (0.0 / nan)
 
@@ -47,7 +50,7 @@ class CmdVelMux(Node):
         self.last = [-1.0, -1.0, -1.0]   # last message time per priority
         self.last_fwd = -1.0
         self.scan_t = -1.0
-        self.front_min = math.inf
+        self.scan = None
         self.create_timer(0.1, self.watchdog)
 
     def now(self):
@@ -55,25 +58,33 @@ class CmdVelMux(Node):
 
     def on_scan(self, msg):
         self.scan_t = self.now()
+        self.scan = msg
+
+    def sector_min(self, direction):
+        """Min valid range within ±FRONT_HALF of `direction` (radians, robot
+        frame). A sector with no valid return is BLOCKED, not clear: the
+        MS200 reports 0.0 in its ~0.1 m dead zone and on absorbing surfaces."""
         best = math.inf
-        for i, r in enumerate(msg.ranges):
-            a = msg.angle_min + i * msg.angle_increment
-            if min(a, 2 * math.pi - a) <= FRONT_HALF \
-                    and RANGE_VALID < r < best:
+        for i, r in enumerate(self.scan.ranges):
+            a = self.scan.angle_min + i * self.scan.angle_increment - direction
+            a = math.atan2(math.sin(a), math.cos(a))
+            if abs(a) <= FRONT_HALF and RANGE_VALID < r < best:
                 best = r
-        # A front sector with no valid return is NOT clear: the MS200 reports
-        # 0.0 both inside its ~0.1 m dead zone and on absorbing surfaces.
-        self.front_min = best if best < math.inf else 0.0
+        return best if best < math.inf else 0.0
 
     def guard(self, msg):
-        self.get_logger().info(
-            f'guard vx={msg.linear.x:.2f} scan_age={self.now()-self.scan_t:.2f} '
-            f'front={self.front_min:.2f}', throttle_duration_sec=1.0)
-        if self.now() - self.scan_t > SCAN_FRESH:
+        if self.now() - self.scan_t > SCAN_FRESH or self.scan is None:
             return Twist()               # blind: no autonomous motion at all
-        if msg.linear.x > 0.0 and self.front_min < FRONT_STOP:
-            msg.linear.x = 0.0           # blocked ahead: rotation only
-        msg.linear.x = max(msg.linear.x, 0.0)   # follow never reverses
+        vx, vy = max(msg.linear.x, 0.0), msg.linear.y   # never reverse
+        speed = math.hypot(vx, vy)
+        if speed > 0.01:
+            # clearance-proportional speed limit along the motion direction:
+            # 0 at FRONT_STOP, +1 m/s per CLEAR_GAIN meters of margin
+            clear = self.sector_min(math.atan2(vy, vx))
+            allowed = max((clear - FRONT_STOP) / CLEAR_GAIN, 0.0)
+            if speed > allowed:
+                vx, vy = vx * allowed / speed, vy * allowed / speed
+        msg.linear.x, msg.linear.y = vx, vy
         return msg
 
     def arbitrate(self, prio, msg):

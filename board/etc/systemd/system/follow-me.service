@@ -1,0 +1,19 @@
+[Unit]
+Description=Follow-me: BPU perception chain + follow node (OK lock / Palm stop)
+After=mipi-cam.service nav-bringup.service ms200-lidar.service
+Wants=mipi-cam.service nav-bringup.service ms200-lidar.service
+
+[Service]
+Type=simple
+# ROS logging needs a resolvable HOME / log dir; a bare systemd env has neither
+Environment=HOME=/root
+Environment=ROS_LOG_DIR=/tmp/roslog
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+ExecStart=/home/sunrise/follow/follow_start.sh
+Restart=on-failure
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

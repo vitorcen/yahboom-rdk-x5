@@ -14,6 +14,7 @@ const SERVICES: &[&str] = &[
     "nav-bringup",
     "nav2",
     "cam-service",
+    "follow-me",
 ];
 
 fn ssh(args: &[&str]) -> Result<String, String> {
@@ -483,6 +484,30 @@ echo "要用它: 停 nav-bringup 后手动 start_app.sh（或 hybrid 模式保�
     ssh_bg(vec![format!("{UNIT_HELPER}{script}")]).await
 }
 
+/// Follow-me switch state: "active enabled" | "inactive disabled" | ...
+/// (echo wrapper: is-active exits nonzero when inactive, which ssh() treats
+/// as an error).
+#[tauri::command]
+async fn follow_get() -> Result<String, String> {
+    ssh_bg(vec![
+        "echo $(systemctl is-active follow-me) $(systemctl is-enabled follow-me 2>/dev/null)"
+            .into(),
+    ])
+    .await
+}
+
+/// Toggle follow-me. enable/disable --now persists the choice in systemd,
+/// so the state survives board reboots.
+#[tauri::command]
+async fn follow_set(on: bool) -> Result<String, String> {
+    let cmd = if on {
+        "systemctl enable --now follow-me"
+    } else {
+        "systemctl disable --now follow-me"
+    };
+    ssh_bg(vec![format!("{cmd} && echo ok")]).await
+}
+
 /// Reboot / power off the board. Action is a strict whitelist, and the UI
 /// arms the button first (two clicks) so a stray click can't cut power.
 #[tauri::command]
@@ -515,7 +540,9 @@ fn main() {
             ctl_fix,
             mod_status,
             mod_info,
-            stack_info
+            stack_info,
+            follow_get,
+            follow_set
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

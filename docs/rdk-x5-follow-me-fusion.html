@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Follow-me 相机+雷达融合跟随 — RDK X5</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:980px; padding:24px 20px 80px; background:#0b0e14; color:#cdd6f4;
+         font:15px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:24px; margin:8px 0 2px; }
+  h2 { font-size:18px; margin:40px 0 10px; padding-bottom:6px; border-bottom:1px solid #262b3d; }
+  h2 .en, h1 .en { color:#5d6485; font-size:.72em; font-weight:400; margin-left:10px; }
+  h3 { font-size:15px; margin:22px 0 6px; color:#a6b6e8; }
+  p, li { color:#b9c2e0; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 6px;
+         font:12.5px ui-monospace,Consolas,monospace; color:#8ec8ea; }
+  pre { background:#0f131f; border:1px solid #262b3d; border-radius:8px; padding:12px 16px;
+        overflow-x:auto; font:12.5px/1.7 ui-monospace,Consolas,monospace; color:#cdd6f4; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid #262b3d; padding:7px 12px; text-align:left; }
+  th { background:#161a26; color:#a6b6e8; font-weight:600; }
+  td { color:#b9c2e0; }
+  .tldr { background:#12202c; border:1px solid #1f3a50; border-left:4px solid #2b7cb8;
+          border-radius:8px; padding:14px 18px; margin:18px 0; }
+  .warn { background:#2c2312; border:1px solid #50401f; border-left:4px solid #b8862b;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .ok   { color:#7ee2a8; } .bad { color:#f38ba8; } .dim { color:#5d6485; }
+  figure { margin:18px 0; } figcaption { font-size:12px; color:#5d6485; margin-top:6px; }
+  svg { max-width:100%; height:auto; display:block; }
+  ol li, ul li { margin:4px 0; }
+  .meta { color:#5d6485; font-size:12.5px; margin-bottom:26px; }
+</style>
+</head>
+<body>
+
+<h1>Follow-me 相机+雷达融合跟随<span class="en">Camera + lidar fused person following</span></h1>
+<div class="meta">RDK X5 Robot · IMX219 单目(上仰) + ORADAR MS200 · v3 2026-07-12 · <span class="ok">实测可用</span></div>
+
+<div class="tldr">
+<b>TL;DR</b> — 零训练。板上 BPU 感知(人体/手势检测 ~30FPS)出<b>身份</b>,雷达腿部聚类出<b>几何</b>,
+两通道<b>常开并行</b>(不是模式切换):方位优先用相机(带身份),距离优先用雷达(比框宽准一个量级),
+任一通道黑掉另一路无缝顶上。麦轮底盘按<b>速度矢量</b>直指主人(vx=v·cosθ, vy=v·sinθ),
+车头对齐只是并行姿态修正——运动方向永远不会错。
+桌凳腿靠<b>世界系运动判别</b>(odom 抵消自身运动)排除:不动的不是人。
+👌OK 锁定 / ✋Palm 停止,GUI 滑块开关经 systemd 持久化,小车重启自动恢复。
+<span class="en">Dual always-on channels; velocity vector aims at the owner; world-frame motion test rejects furniture.</span>
+</div>
+
+<h2>一、实机核实的基础<span class="en">Verified on-board facts</span></h2>
+<table>
+<tr><th>组件</th><th>作用</th><th>实测</th></tr>
+<tr><td><code>mono2d_body_detection</code> + <code>hand_lmk</code> + <code>hand_gesture</code></td><td>body/head/face/hand 框 + 跟踪ID + 手势,BPU 推理,消费常驻 mipi-cam 的 /image_raw(960×544)</td><td class="ok">✔ 全链 22–30FPS,推理 10ms;手势值源码核实 Okay=11 / Palm=5</td></tr>
+<tr><td>消息结构</td><td>每个 roi 是<b>独立 target</b>(body/hand 各一条);手势挂在 hand-only target 上,须按"手框中心落在谁的 body 框内"归属</td><td class="ok">✔ 实机抓包确认</td></tr>
+<tr><td>手势分类闪烁</td><td>稳定持 OK 输出 11,0,0,11,…</td><td class="ok">✔ 触发全部改滑窗投票</td></tr>
+<tr><td>MS200 雷达</td><td>lidar_link yaw=0,scan 角 0=车头;≤0.1m 盲区和吸光面返回无效回波(0.0)</td><td class="ok">✔ "无有效数据=有障碍"已入钳位</td></tr>
+<tr><td><code>/odom</code>(EKF)</td><td>10Hz 位姿,运动判别的世界系基准</td><td class="ok">✔</td></tr>
+<tr><td>MOT 调参</td><td><code>min_score 0.8→0.3</code>(转身时检测分下探导致 ID 断)、<code>euclidean_thres 200→300</code></td><td class="ok">✔ follow_start.sh 内 sed,幂等</td></tr>
+<tr><td>底盘</td><td>X3 麦轮,协议满量程 v=±1.0 m/s、vy 可横移、v_z=±5 rad/s</td><td class="ok">✔ 源码 set_car_motion</td></tr>
+</table>
+
+<h2>二、架构<span class="en">Architecture</span></h2>
+<figure>
+<svg viewBox="0 0 900 330" font-family="system-ui,sans-serif" font-size="13">
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 z" fill="#4a5165"/></marker></defs>
+  <style>
+    .b { fill:#161a26; stroke-width:1.5; rx:8; }
+    .t { fill:#cdd6f4; } .s { fill:#8b93b5; font-size:10.5px; }
+    .w { stroke:#4a5165; stroke-width:1.4; fill:none; marker-end:url(#a); }
+    .lbl { fill:#5d6485; font-size:10px; }
+  </style>
+  <rect class="b" x="20" y="40" width="185" height="56" stroke="#7ee2a8"/>
+  <text class="t" x="112" y="63" text-anchor="middle">BPU 感知链(30Hz)</text>
+  <text class="s" x="112" y="82" text-anchor="middle">body/hand 框 · 跟踪ID · 手势</text>
+  <rect class="b" x="20" y="130" width="185" height="56" stroke="#7ee2a8"/>
+  <text class="t" x="112" y="153" text-anchor="middle">MS200 /scan(10Hz)</text>
+  <text class="s" x="112" y="172" text-anchor="middle">腿部聚类 4–40cm · 360°</text>
+  <rect class="b" x="20" y="220" width="185" height="50" stroke="#7ee2a8"/>
+  <text class="t" x="112" y="242" text-anchor="middle">/odom EKF(10Hz)</text>
+  <text class="s" x="112" y="259" text-anchor="middle">世界系运动判别基准</text>
+  <rect class="b" x="290" y="105" width="230" height="110" stroke="#c792ea"/>
+  <text class="t" x="405" y="130" text-anchor="middle">follow_me.py(自研)</text>
+  <text class="s" x="405" y="150" text-anchor="middle">相机通道:身份/手势/方位</text>
+  <text class="s" x="405" y="167" text-anchor="middle">雷达通道:腿轨迹+速度外推</text>
+  <text class="s" x="405" y="184" text-anchor="middle">运动判别 · 找回窗口 · ID 收养</text>
+  <text class="s" x="405" y="201" text-anchor="middle">控制 10–40Hz:矢量速度+PD 转向</text>
+  <rect class="b" x="600" y="105" width="150" height="76" stroke="#c792ea"/>
+  <text class="t" x="675" y="130" text-anchor="middle">cmd_vel_mux</text>
+  <text class="s" x="675" y="148" text-anchor="middle">joy&gt;follow&gt;nav 仲裁</text>
+  <text class="s" x="675" y="165" text-anchor="middle">运动方向扇区钳位</text>
+  <rect class="b" x="600" y="230" width="150" height="50" stroke="#e0a458"/>
+  <text class="t" x="675" y="252" text-anchor="middle">Mcnamu_driver</text>
+  <text class="s" x="675" y="269" text-anchor="middle">麦轮 vx·vy·wz</text>
+  <rect class="b" x="290" y="20" width="230" height="50" stroke="#c792ea"/>
+  <text class="t" x="405" y="42" text-anchor="middle">GUI 🧍跟随 滑块开关</text>
+  <text class="s" x="405" y="59" text-anchor="middle">systemctl enable/disable --now</text>
+  <path class="w" d="M205,68 H290 V103"/>
+  <path class="w" d="M205,158 H288"/>
+  <path class="w" d="M205,245 H270 V190 H288"/>
+  <path class="w" d="M520,160 H598"/>
+  <path class="w" d="M675,181 V228"/>
+  <path class="w" d="M405,70 V103"/>
+  <text class="lbl" x="528" y="152">/cmd_vel_follow</text>
+  <text class="lbl" x="683" y="208">/cmd_vel_drv</text>
+</svg>
+<figcaption>绿=现成,紫=自研,橙=亚博。mux 的钳位独立于跟随进程:跟随节点整个失控,速度也过不了雷达那关。</figcaption>
+</figure>
+
+<h2>三、融合跟随算法<span class="en">The fusion algorithm</span></h2>
+
+<h3>3.1 双通道观测(常开并行)</h3>
+<table>
+<tr><th></th><th>相机通道(30Hz)</th><th>雷达通道(10Hz)</th></tr>
+<tr><td>提供</td><td>身份(track_id)、手势、body 方位角、肩宽估距 <code>d≈360px·m/宽px</code>(粗)</td><td>腿部聚类精确 (方位, 距离);全 360°(±π 接缝合并,正后方不再是盲区)</td></tr>
+<tr><td>有效期</td><td>0.4s</td><td>1.2s(单腿视角会闪烁)</td></tr>
+<tr><td>失效时</td><td>雷达腿轨迹顶上(近距/急转/背对全覆盖)</td><td>相机肩宽估距兜底</td></tr>
+</table>
+<p><b>雷达门限的锚定</b>是融合的关键:相机新鲜时,聚类搜索门限以<b>相机方位+肩宽估距</b>为中心(±0.5rad, ±0.8m)——雷达永远知道"腿该在哪";相机黑掉后,门限改用<b>腿轨迹自身+速度外推</b>(±0.4rad, ±0.4m,速度是低通滤波的方位/距离变化率)——人在走,门就跟着人走。</p>
+
+<h3>3.2 认腿:尺寸只是入场券,运动才是身份</h3>
+<ul>
+<li><b>聚类</b>:相邻点角差 &lt;0.06rad 且距差 &lt;0.10m 归组;物理宽 4–40cm(单腿到双腿并拢)为候选。桌凳腿同样通过——尺寸无法区分。</li>
+<li><b>运动判别(世界系)</b>:所有候选聚类经 /odom 换算到世界坐标,滚动保留 1.2s 快照,机器人自身的移动/旋转被抵消。两条规则:
+  <ol>
+  <li><b>咬合关</b>(相机黑时新抓目标):候选位置 1.2s 前<b>已有东西占着</b> → 家具,拒绝。odom 不新鲜时一律不盲抓。</li>
+  <li><b>持有关</b>:跟踪中的"腿"世界系 3s 纹丝不动(&lt;0.12m)且相机黑 → 判家具,放弃站住(日志"疑似家具,放弃")。相机能看到 body 时不做此淘汰——站着的人是合法目标。</li>
+  </ol></li>
+<li><b>ID 收养</b>:转身使外观突变,跟踪器可能换发新 ID。旧 ID 消失时,若有 body 与旧位置重叠(横移 &lt;25% 画宽、宽度比 0.5–2)或与腿轨迹方位吻合(±0.3rad),锁直接转移,不判丢失。</li>
+</ul>
+
+<h3>3.3 控制律:矢量速度 + PD 转向,10–40Hz</h3>
+<pre>方位 θ:相机新鲜用相机(身份保证),否则用腿轨迹
+距离 d:腿轨迹新鲜用雷达实测(基准 ref_dist 在锁定后第一次雷达命中时记下),
+        否则退回相机框尺寸比 e=log(ref/now)
+
+速度大小  v = KV·(d − ref_dist)          死区 0.07m,加速限幅 0.8 m/s²(刹车不限)
+速度上限  cap = 0.5 + 0.3·min(|θ|/0.6rad, 1)   直行 0.5,角度越大越快,封顶 0.8
+速度方向  vx = v·cosθ, vy = v·sinθ       ← 麦轮全向:方向瞬时指向主人,与车头解耦
+转向     wz = 4.0·θ + 0.6·θ̇             PD:变化率前馈,主人一横移车头就起转
+控制节拍  雷达帧(10Hz)+ 相机帧(30Hz)都踩控制 ≈ 40Hz,方位延迟 ≤33ms</pre>
+<p class="dim">"前冲方向错、越追越远"的旧病根:速度只能沿车头发,车头没转到位方向就是错的。矢量化后车头对齐(wz)只是并行的姿态整理,不再是速度的前提。</p>
+
+<h3>3.4 手势与状态机</h3>
+<table>
+<tr><th>事件</th><th>判定(滑窗投票,抗分类闪烁)</th><th>动作 / 蜂鸣</th></tr>
+<tr><td>👌 OK 锁定</td><td>1s 窗内命中 ≥4 次,全场唯一候选(多人同 OK 拒绝)</td><td>锁定+两短鸣;锁定后第一次雷达命中记 ref_dist</td></tr>
+<tr><td>✋ Palm 停止</td><td>0.7s 窗内 ≥2 次,<b>任何人</b>,body 出画时手在画面内也有效</td><td>锁存停止+一长鸣;并取消找回窗口</td></tr>
+<tr><td>SELECT / 感知链断流 3s / 雷达断流 0.5s</td><td>—</td><td>锁存停止(一长鸣 / 三短鸣)</td></tr>
+<tr><td>双通道全黑 &gt;2.5s</td><td>—</td><td>刹停解锁+三短鸣,开 10s 找回窗口</td></tr>
+<tr><td>找回窗口内主人回来</td><td>画面唯一一人稳定 ~0.25s</td><td>自动重锁+两短鸣,沿用原 ref_dist(距离不变)</td></tr>
+</table>
+
+<h2>四、安全<span class="en">Safety</span></h2>
+<ul>
+<li><b>mux 内钳位,独立进程,方向感知</b>:跟随速度是矢量,钳位查<b>运动方向 ±30° 扇区</b>的雷达余量,按 <code>允许速度=(余量−0.35m)/0.3</code> 比例限速(无开关震荡);扇区无有效回波=堵死;scan 过期 &gt;0.4s 全零;vx&lt;0 永远禁止。斜滑不是盲区。</li>
+<li><b>手柄最高优先级</b>:joy 压制 + follow 节点见 SELECT 锁存。注意这是<b>软件仲裁</b>非硬通道,贴身实测备好车尾电源开关。</li>
+<li><b>已知盲区</b>:2D 雷达单平面——低矮物/悬空物/台阶不可见;运动判别无法区分"相机外站着的人"和柜子(3s 静止会松口,人挪步即重咬)。</li>
+</ul>
+
+<h2>五、部署与使用<span class="en">Deploy & run</span></h2>
+<pre># 板上(repo board/ 镜像)
+/etc/systemd/system/follow-me.service      # 感知链+跟随节点,一体服务
+/home/sunrise/follow/follow_start.sh       # 三 BPU 节点 + follow_me.py + MOT sed 调参
+/home/sunrise/follow/follow_me.py          # 融合跟随节点(~330 行)
+/home/sunrise/nav_config/cmd_vel_mux.py    # 仲裁 + 方向感知钳位
+
+# 开关(推荐走 GUI):仪表盘 "🧍 跟随" 滑块
+#   开 = systemctl enable --now follow-me   关 = disable --now
+#   状态存 systemd:GUI 重启显示真实状态,小车重启按开关自动恢复
+# GUI 相机小窗叠加检测框/手势标注(调试必开);日志 Tab 可读 follow-me journal</pre>
+<div class="warn"><b>systemd 部署踩过的坑</b>:①脚本 <code>trap 'kill 0'</code> 会把自己也杀掉,systemd 判 signal 失败→无限重启,要只杀后台子进程;②service 环境无 <code>HOME</code>,ROS 日志目录展开失败节点秒崩,需 <code>Environment=HOME=/root</code> + <code>ROS_LOG_DIR=/tmp/roslog</code>。</div>
+
+<h2>六、验收<span class="en">Acceptance</span></h2>
+<table>
+<tr><th>#</th><th>测试</th><th>状态</th></tr>
+<tr><td>1</td><td>钳位:障碍 0.15m 发前进指令 → 输出 0;余量 0.40m → 按比例放行 ≤0.17 m/s</td><td class="ok">✔ 实测</td></tr>
+<tr><td>2</td><td>OK 锁定 / Palm 停止 / 蜂鸣反馈</td><td class="ok">✔ 实测可用(滑窗投票后)</td></tr>
+<tr><td>3</td><td>直线+转弯跟随,近距贴身,转身背对</td><td class="ok">✔ 实测可用(融合后);大转弯持续观察中</td></tr>
+<tr><td>4</td><td>桌凳腿误咬</td><td class="ok">✔ 运动判别后未再复现,继续观察</td></tr>
+<tr><td>5</td><td>故障注入:杀感知/杀节点/停雷达 → 刹停</td><td class="dim">待做</td></tr>
+<tr><td>6</td><td>各速度物理停车距离回填 FRONT_STOP</td><td class="dim">待做</td></tr>
+</table>
+
+<h2>参考<span class="en">References</span></h2>
+<ul>
+<li>代码:<code>board/home/sunrise/follow/</code>、<code>board/home/sunrise/nav_config/cmd_vel_mux.py</code>、<code>board/etc/systemd/system/follow-me.service</code></li>
+<li>手势枚举:<code>source/.../gesture_control/include/common.h</code>(Okay=11, Palm=5);底盘量程:<code>SunriseRobotLib.py set_car_motion</code></li>
+<li>相关:<code>docs/rdk-x5-gui-architecture.html</code>(GUI/mux 架构)、<code>docs/rdk-x5-official-experiments-and-advanced-practice.html</code>(进阶路线)</li>
+</ul>
+
+</body>
+</html>

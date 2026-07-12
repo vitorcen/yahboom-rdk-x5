@@ -95,3 +95,24 @@ $('diagfix').onclick = async () => {
   setTimeout(ctlCheck, 20000);      // final: driver/mux need 10-20 s to spawn
 };
 if (!invoke) $('ctl').style.display = 'none';   // browser mode: no ssh backend
+
+// ---- Follow-me switch: systemd enable/disable on the board, so the choice
+// is remembered and survives both GUI restarts and board reboots ----
+async function followRefresh() {
+  try {
+    const active = (await invoke('follow_get')).trim().split(' ')[0] === 'active';
+    $('mFollow').classList.toggle('on', active);
+  } catch { /* board unreachable: keep last look */ }
+}
+if (invoke) {
+  followRefresh();
+  setInterval(followRefresh, 10000);
+  $('mFollow').onclick = async () => {
+    const on = !$('mFollow').classList.contains('on');
+    $('mFollow').disabled = true;
+    $('mFollow').classList.toggle('on', on);     // optimistic; refresh corrects
+    try { await invoke('follow_set', { on }); }
+    catch { $('mFollow').classList.toggle('on', !on); }
+    finally { $('mFollow').disabled = false; setTimeout(followRefresh, 4000); }
+  };
+} else $('mFollow').style.display = 'none';

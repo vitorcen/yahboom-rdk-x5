@@ -32,7 +32,8 @@ onTopic('/hobot_hand_gesture_detection', m => {
   g.font = '12px system-ui'; g.lineWidth = 2;
   for (const t of m.targets || []) {
     const gests = (t.attributes || []).filter(a => a.type.includes('gesture'))
-                                      .map(a => Math.round(a.value));
+                                      .map(a => Math.round(a.value))
+                                      .filter(v => v);   // 0 = classifier idle
     for (const r of t.rois || []) {
       const c = ROI_COLOR[r.type] || '#c792ea';
       const x = ox + r.rect.x_offset * s, y = oy + r.rect.y_offset * s;

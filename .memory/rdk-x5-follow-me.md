@@ -1,25 +1,25 @@
 ---
 name: rdk-x5-follow-me
-description: Follow-me 视觉跟随已实现并台架验证;mux 升级三优先级+雷达钳位;关键教训与待实测清单
+description: Follow-me 相机+雷达融合跟随已实测可用;GUI systemd 开关;算法细节与实战教训
 metadata:
   type: project
 ---
 
-Follow-me 视觉跟随(2026-07-12,方案经 codex gpt-5.6-sol 评审后收敛为 MVP,详见
-docs/rdk-x5-follow-me-vision.html):
+Follow-me 融合跟随(v3 2026-07-12,实测可用,详见 docs/rdk-x5-follow-me-fusion.html):
 
-- 板上文件:`/home/sunrise/follow/{follow_me.py,follow_start.sh}`(repo 镜像 board/)。
-  感知链复用常驻 mipi-cam 的 `/image_raw`(960×544 ros 模式),mono2d+hand_lmk+gesture
-  三 BPU 节点全链 ~22FPS、推理 10ms。跟随节点只订合并话题 `/hobot_hand_gesture_detection`。
-- 手势值(亚博源码 common.h 核实):Okay=11 锁定(3 帧、唯一候选)、Palm=5 任何人停止。
-  停止全部锁存,重新 OK 才恢复。蜂鸣 /Buzzer 是 std_msgs/Bool;RGB 弃用(I2C 崩溃前科)。
-- mux 升级(nav_config/cmd_vel_mux.py):`/cmd_vel_joy > /cmd_vel_follow > /cmd_vel` 三优先级;
-  follow 源独立雷达钳位——scan 过期>0.4s 全零、前扇区±30°<0.35m 禁前进、永远禁倒车。
-- **教训:MS200 在 ≤0.1m 盲区/吸光面返回无效回波(0.0),前扇区"无有效数据"曾被算成
-  front_min=inf 当畅通放行(实测抓获)。无数据必须当有障碍。**
-- 评审要点:跟错人比丢人危险(否决颜色重识别/SEARCH);框裁剪后 d=k/h 反向失效(贴上沿
-  即判无效);SELECT 是软件仲裁非硬通道;声光必须异步。
-- 待实测(需真人):OK/Palm 手势、跟随行为、故障注入、物理停车距离(见文档验收表 3-7)。
-  lidar_link yaw=0,scan 角 0=车头。
+- **架构**:相机(BPU 感知 30FPS,身份/手势/方位)+ 雷达(腿聚类 10Hz,精确几何)双通道
+  常开并行,非模式切换;控制 10~40Hz,麦轮矢量速度 vx=v·cosθ/vy=v·sinθ 直指主人,
+  PD 转向(KW 4 + 变化率前馈 0.6);速度 0.5 直行→0.8(角度大加速);雷达距离基准
+  ref_dist 锁定后首次雷达命中记录。
+- **认腿=运动判别**(世界系,/odom 抵消自身运动):新咬合要求"1.2s 前不在原地",
+  持有中"3s 世界系静止且相机黑"即放弃——桌凳腿尺寸过滤不掉,只能靠不动淘汰。
+- **开关**:follow-me.service + GUI 仪表盘 🧍跟随 滑块(sw 样式),
+  systemctl enable/disable --now 持久化,小车重启自动恢复。
+- **实战教训**:①手势分类闪烁(11,0,0,11…)→滑窗投票,别用连续帧;②感知输出每 roi
+  一条独立 target,手势在 hand-only target 上要按包含关系归属;③MOT min_score 0.8
+  转身就断 ID,降 0.3;④速度沿车头发=方向错,麦轮必须矢量化;⑤systemd 下
+  trap 'kill 0' 自杀成重启环、无 HOME 则 ROS 日志目录崩,service 要给 HOME 和
+  ROS_LOG_DIR;⑥pgrep -f 会匹配含关键词的 ssh 命令自身(多次上当)。
+- 待做:故障注入测试、物理停车距离回填 FRONT_STOP。
 
-相关:[[rdk-x5-robot-status]] [[rdk-x5-nav2-plan]]
+相关:[[rdk-x5-robot-status]] [[rdk-x5-nav2-plan]] [[feedback-atomic-commits]]
