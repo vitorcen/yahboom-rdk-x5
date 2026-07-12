@@ -77,7 +77,6 @@ class FollowMe(Node):
         self.zeros_left = 0            # post-stop zero burst, sent by ticker
         self.beeps = []                # [(bool, seconds), ...] timer-driven
         self.beep_t = 0.0
-        self.logged_shape = False
         self.create_timer(0.05, self.tick)
         self.get_logger().info('follow_me up: OK 锁定 / Palm 停止 / SELECT 停止')
 
@@ -120,17 +119,29 @@ class FollowMe(Node):
 
     def on_perception(self, msg):
         self.last_perc = self.now()
-        persons, palms = {}, False
+        persons, orphans, palms = {}, [], False
         for t in list(msg.targets):
             rois, gests = rois_of(t), gestures_of(t)
-            if not self.logged_shape and (rois or gests):
-                self.logged_shape = True
+            if gests:
                 self.get_logger().info(
-                    f'消息形态: type={t.type} id={t.track_id} '
-                    f'rois={list(rois)} gestures={gests}')
+                    f'手势 {gests} type={t.type} id={t.track_id} rois={list(rois)}',
+                    throttle_duration_sec=1.0)
             if 'body' in rois:
-                persons[t.track_id] = (rois, gests)
+                persons[t.track_id] = [rois, gests]
+            elif gests and 'hand' in rois:
+                orphans.append((rois['hand'], gests))
             palms = palms or GESTURE_PALM in gests
+        # the pipeline may emit gestures on hand-only targets whose track_id
+        # differs from the person's: attach by hand-center-in-body containment
+        for hand, gests in orphans:
+            hx = hand.x_offset + hand.width / 2.0
+            hy = hand.y_offset + hand.height / 2.0
+            for rois, g in persons.values():
+                b = rois['body']
+                if b.x_offset <= hx <= b.x_offset + b.width \
+                        and b.y_offset <= hy <= b.y_offset + b.height:
+                    g.extend(gests)
+                    break
         if palms:
             self.palm_frames += 1
         else:

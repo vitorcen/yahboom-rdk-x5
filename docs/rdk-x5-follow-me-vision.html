@@ -181,7 +181,13 @@ ssh root@192.168.3.187
 cd /home/sunrise/follow && ./follow_start.sh
 # 对镜头做 OK(约 1–2m,正对)→ 两短鸣,开始跟随
 # 摊掌 / 按 SELECT → 一长鸣,停止;再 OK 恢复</pre>
-<p class="dim">感知链复用常驻的 mipi-cam 服务(/image_raw),不与 Web 预览冲突。首帧含目标时节点会打一条"消息形态"日志,用于核对 roi/手势字段。</p>
+<p class="dim">感知链复用常驻的 mipi-cam 服务(/image_raw),不与 Web 预览冲突。检测到手势时节点按 1s 节流打"手势 [...]"日志到 /tmp/follow.log,用于核对字段与归属。</p>
+<h3>GUI 相机叠加(调试手势必开)</h3>
+<p>GUI 仪表盘的相机小窗现在会经 rosbridge 订阅 <code>/hobot_hand_gesture_detection</code>,
+在视频上实时叠加检测框:body 蓝 / head 灰 / face 绿 / hand 橙,body 框标 track_id,
+hand 框直接标手势(👌OK 锁定 / ✋Palm 停止 / 👍 / ✌ …)。看不到框 = 模型没看到你——
+<b>相机上仰,先确认人真的在画面里</b>;手势要求手在画面内、朝向镜头、距离 1–2m。
+感知链没跑(follow_start.sh 未启动)时叠加层自动清空,不影响正常预览。</p>
 
 <h2>八、验收清单(待实测)<span class="en">Acceptance, pending field test</span></h2>
 <table>

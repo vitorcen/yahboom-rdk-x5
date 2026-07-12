@@ -71,6 +71,7 @@ canvas#cv { background:#0f131f; border:1px solid #262b3d; border-radius:8px;
           overflow:hidden; cursor:grab; user-select:none; }
 #cambox:active { cursor:grabbing; }
 #cam { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+#camov { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 #camgrip { position:absolute; right:0; bottom:0; width:26px; height:26px;
            cursor:nwse-resize; }
 #camgrip::after { content:''; position:absolute; right:4px; bottom:4px;
