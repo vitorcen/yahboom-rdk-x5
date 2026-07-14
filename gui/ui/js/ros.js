@@ -46,7 +46,9 @@ export function connect() {
     sub('/hobot_hand_gesture_detection', 'ai_msgs/msg/PerceptionTargets', 100);
     sub('/voltage', 'std_msgs/Float32', 5000);
     sub('/safety_enabled', 'std_msgs/Bool');   // latched by safety_stop
+    sub('/dog_active', 'std_msgs/Bool');        // latched by dog_walk
     sub('/recording', 'std_msgs/Bool');        // latched by episode_recorder
+    sub('/joy', 'sensor_msgs/Joy', 100);       // logs tab prints button-index on press (capture R1/R2)
     sub('/rosout', 'rcl_interfaces/msg/Log');
     ws.send(JSON.stringify({ op:'advertise', topic:'/goal_pose', type:'geometry_msgs/PoseStamped' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/cmd_vel', type:'geometry_msgs/Twist' }));
@@ -54,6 +56,7 @@ export function connect() {
     ws.send(JSON.stringify({ op:'advertise', topic:'/safety_toggle', type:'std_msgs/Empty' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/record_toggle', type:'std_msgs/Empty' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/record_stop', type:'std_msgs/Empty' }));
+    ws.send(JSON.stringify({ op:'advertise', topic:'/dog_stop', type:'std_msgs/Empty' }));
     ws.send(JSON.stringify({ op:'advertise', topic:'/Buzzer', type:'std_msgs/Bool' }));
   };
   ws.onclose = () => { st.textContent = '已断开,3s后重连…'; st.className = 'pill bad';

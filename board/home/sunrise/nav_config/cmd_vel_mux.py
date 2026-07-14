@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """cmd_vel priority mux + watchdog + follow guard (seed of cmd_vel_guard).
 
-  /cmd_vel_joy    (HIGH, joystick)       \
-  /cmd_vel_follow (MID,  follow-me)       > /cmd_vel_mux -> safety_stop (C++)
-  /cmd_vel        (LOW,  Nav2/keyboard)  /                    -> /cmd_vel_drv -> Mcnamu_driver
+  /cmd_vel_joy    (HIGH,   joystick)        \
+  /cmd_vel_dog    (P1,     dog-walk wander)  > /cmd_vel_mux -> safety_stop (C++)
+  /cmd_vel_follow (P2,     follow-me)        /                    -> /cmd_vel_drv
+  /cmd_vel        (LOW,    Nav2/keyboard)   /                     -> Mcnamu_driver
+
+Dog-walk sits ABOVE follow/Nav2 on purpose: engaging it must preempt whatever
+those two are DOING (a follow chase, a nav goal) without touching their feature
+switches — follow keeps running/enabled, it just loses the bus while dog owns it
+and resumes the instant dog stops. Only the human joystick outranks dog.
 
 Rules:
 - A message from a source is forwarded unless a higher-priority source has
@@ -42,12 +48,13 @@ class CmdVelMux(Node):
     def __init__(self):
         super().__init__('cmd_vel_mux')
         self.pub = self.create_publisher(Twist, '/cmd_vel_mux', 10)
-        for prio, topic in enumerate(['/cmd_vel_joy', '/cmd_vel_follow', '/cmd_vel']):
+        for prio, topic in enumerate(
+                ['/cmd_vel_joy', '/cmd_vel_dog', '/cmd_vel_follow', '/cmd_vel']):
             self.create_subscription(
                 Twist, topic, lambda m, p=prio: self.arbitrate(p, m), 10)
         self.create_subscription(LaserScan, '/scan', self.on_scan,
                                  qos_profile_sensor_data)
-        self.last = [-1.0, -1.0, -1.0]   # last message time per priority
+        self.last = [-1.0, -1.0, -1.0, -1.0]   # last message time per priority
         self.last_fwd = -1.0
         self.scan_t = -1.0
         self.scan = None
@@ -91,7 +98,7 @@ class CmdVelMux(Node):
         t = self.now()
         if any(t - self.last[p] < HOLD for p in range(prio)):
             return                       # a higher-priority source owns the bus
-        if prio == 1:
+        if prio == 2:                    # follow-me is the only guarded source
             msg = self.guard(msg)
         self.last[prio] = self.last_fwd = t
         self.pub.publish(msg)

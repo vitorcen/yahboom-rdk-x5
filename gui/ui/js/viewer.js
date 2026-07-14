@@ -191,6 +191,7 @@ cv.addEventListener('click', e => {
   const yaw = pose ? Math.atan2(gy - pose.y, gx - pose.x) : 0;
   goalPin = { x: gx, y: gy };
   cancelAllGoals();
+  send({ op:'publish', topic:'/dog_stop', msg:{} });   // a nav goal preempts dog-walk
   planMsg = null;
   render();                            // pin shows immediately, plan line follows
   setTimeout(() => {
@@ -230,6 +231,9 @@ $('stop').onclick = () => {
   // alone: the zero burst outranks follow, and the 🧍 switch owns the feature.
   // idempotent stop (not toggle — toggle would start recording if idle)
   send({ op:'publish', topic:'/record_stop', msg:{} });
+  // stop-all also exits dog-walk: its /cmd_vel_joy zeros above won't trigger the
+  // grab-stick takeover (that needs NONZERO), so signal /dog_stop explicitly.
+  send({ op:'publish', topic:'/dog_stop', msg:{} });
   // one long beep = stop-all, same audible contract as the gamepad Y key
   send({ op:'publish', topic:'/Buzzer', msg:{ data:true } });
   setTimeout(() => send({ op:'publish', topic:'/Buzzer', msg:{ data:false } }), 600);

@@ -18,6 +18,24 @@ onTopic('/rosout', m => {
   if (S.page === 'logs' && curSrc === 'rosout') renderLogs();
 });
 
+// Gamepad button probe: this pad ignores convention (L1 came out buttons[6]),
+// so R1/R2 indices must be read off the physical pad. Print each 0->1 edge as a
+// synthetic rosout line — press a button, read its index in the logs tab.
+let prevJoyBtns = [];
+onTopic('/joy', m => {
+  const b = m.buttons || [];
+  const pressed = [];
+  for (let i = 0; i < b.length; i++) if (b[i] && !prevJoyBtns[i]) pressed.push(i);
+  prevJoyBtns = b;
+  if (!pressed.length) return;
+  const held = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
+  rosoutBuf.push({ lv: 20, name: 'joy',
+                   msg: `🎮 按下 buttons[${pressed.join(',')}]  (当前按住: [${held.join(',')}])`,
+                   tm: new Date().toTimeString().slice(0, 8) });
+  if (rosoutBuf.length > ROSOUT_MAX) rosoutBuf.splice(0, rosoutBuf.length - ROSOUT_MAX);
+  if (S.page === 'logs' && curSrc === 'rosout') renderLogs();
+});
+
 function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }

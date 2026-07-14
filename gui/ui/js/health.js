@@ -2,7 +2,7 @@
 // topic-freshness dots. The board has no current sensor, so real power (W)
 // is unreadable — temp/CPU stand in as the load indicators.
 import { $, invoke } from './state.js';
-import { onTopic, connected, send } from './ros.js';
+import { onTopic, connected, send, cancelAllGoals } from './ros.js';
 
 // ---- topic freshness -> dots ----
 const last = {};                                  // topic -> performance.now()
@@ -102,6 +102,32 @@ if (!invoke) $('ctl').style.display = 'none';   // browser mode: no ssh backend
 onTopic('/safety_enabled', m => $('mSafety').classList.toggle('on', m.data));
 $('mSafety').onclick = () => send({ op:'publish', topic:'/safety_toggle', msg:{} });
 
+// ---- Dog-walk button: dog_walk owns the state and latches /dog_active; the
+// GUI mirrors it and, while active, ticks elapsed seconds in the label — that
+// count is also the visible proof the click registered, and shows the 3-min
+// timeout ticking down its budget. Click again to stop. Refuse-start (safety
+// brake off) never latches active, so guard the click and flash a hint (the
+// dog_walk node makes the same refusal — three short beeps).
+let dogOn = false, dogT0 = 0, dogTimer = null;
+function dogLabel() {
+  $('mDog').textContent = `🐕 遛狗中 ${Math.floor((performance.now() - dogT0) / 1000)}s`;
+}
+onTopic('/dog_active', m => {
+  dogOn = m.data;
+  $('mDog').classList.toggle('on', m.data);
+  clearInterval(dogTimer); dogTimer = null;
+  if (m.data) { dogT0 = performance.now(); dogLabel(); dogTimer = setInterval(dogLabel, 1000); }
+  else $('mDog').textContent = '🐕 遛狗';
+});
+$('mDog').onclick = () => {
+  // Async, no gate: fire the toggle and show transitional text at once; the
+  // latched /dog_active reconciles the real state and runs the seconds ticker.
+  // No brake/follow gate — dog is lidar-driven itself and just preempts
+  // follow's/nav's motion at the mux, never touching their switches.
+  send({ op:'publish', topic:'/dog_toggle', msg:{} });
+  $('mDog').textContent = dogOn ? '🐕 停止中…' : '🐕 启动中…';
+};
+
 // ---- Recording buttons (dashboard + data tab): episode_recorder owns the
 // state and latches /recording; every .recbtn just publishes a toggle and
 // mirrors the broadcast, so all copies stay in sync for free ----
@@ -124,6 +150,10 @@ async function followRefresh() {
 async function setFollow(on) {
   $('mFollow').disabled = true;
   $('mFollow').classList.toggle('on', on);       // optimistic; refresh corrects
+  if (on) {                                      // starting follow preempts the
+    send({ op:'publish', topic:'/dog_stop', msg:{} });   // two lightweight modes
+    cancelAllGoals();                            // (single-shot; its own switch
+  }                                              // stays untouched — persistence)
   try { await invoke('follow_set', { on }); }
   catch { $('mFollow').classList.toggle('on', !on); }
   finally { $('mFollow').disabled = false; setTimeout(followRefresh, 4000); }

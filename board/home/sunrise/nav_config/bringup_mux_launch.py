@@ -91,9 +91,16 @@ def generate_launch_description():
         output='screen', respawn=True, respawn_delay=1.0,
     )
 
+    # Dog-walk: reactive /scan wander on /cmd_vel_dog (mux P3, lowest). Boots
+    # idle, R1-toggled; grabbing the stick or the lidar dying makes it exit.
+    dog_walk_node = ExecuteProcess(
+        cmd=['python3', os.path.join(os.path.dirname(__file__), 'dog_walk.py')],
+        output='screen', respawn=True, respawn_delay=1.0,
+    )
+
     return LaunchDescription([
         pub_odom_tf_arg,
         driver_node, base_node, imu_filter_node, ekf_node,
         joy_node, joy_teleop_node, description_node,
-        mux_node, safety_node, recorder_node,
+        mux_node, safety_node, recorder_node, dog_walk_node,
     ])

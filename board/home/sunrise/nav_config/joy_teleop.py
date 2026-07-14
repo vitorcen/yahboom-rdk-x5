@@ -31,8 +31,14 @@ on-board with multi-second key holds — never trust convention here:
           /record_toggle, which would START one when idle). Feature
           switches (follow-me) are deliberately NOT touched.
   buttons[RECORD_BTN] START key -> toggle episode recording (/record_toggle)
+  buttons[R1_BTN] R1 key -> toggle dog-walk mode (/dog_toggle); the dog_walk
+          node holds the on/off state, same Empty-flip contract as safety.
+  buttons[R2_BTN] R2 key -> captured, function TBD (logs only for now)
   axes[4]/axes[5] are trigger axes that REST at +1.0 — never map them;
           doing so commands a permanent creep (found the hard way).
+
+Button indices here are all measured on-board — this pad ignores convention
+(L1 came out as buttons[6], not 4); R1/R2 were captured 2026-07-14.
 """
 import rclpy
 from rclpy.node import Node
@@ -54,6 +60,10 @@ STOP_BTN = 4        # Y key: stop-all (rising edge)
 RECORD_BTN = 11     # START key: toggle episode recording (rising edge).
                     # Captured on-board 2026-07-13 — this pad never follows
                     # convention (L1 was mislabeled SELECT).
+R1_BTN = 7          # R1 key: toggle dog-walk mode (rising edge).
+R2_BTN = 9          # R2 key: captured, function TBD (rising edge, logs only).
+                    # captured on-board 2026-07-14 (this pad ignores convention
+                    # — L1 was buttons[6])
 STOP_ZEROS = 40     # ~2 s of zeros at the 20 Hz joy autorepeat: holds the
                     # mux top priority while the Nav2 cancel takes effect
 
@@ -65,6 +75,8 @@ class JoyTeleop(Node):
         self.pub_toggle = self.create_publisher(Empty, '/safety_toggle', 10)
         self.pub_rec_toggle = self.create_publisher(Empty, '/record_toggle', 10)
         self.pub_rec_stop = self.create_publisher(Empty, '/record_stop', 10)
+        self.pub_dog_toggle = self.create_publisher(Empty, '/dog_toggle', 10)
+        self.pub_dog_stop = self.create_publisher(Empty, '/dog_stop', 10)
         self.cancel_cli = self.create_client(
             CancelGoal, '/navigate_to_pose/_action/cancel_goal')
         self.pub_beep = self.create_publisher(Bool, '/Buzzer', 10)
@@ -75,6 +87,8 @@ class JoyTeleop(Node):
         self.stop_btn_prev = 0
         self.rec_btn_prev = 1   # require a seen release before the first
                                 # trigger (guards a held key at startup)
+        self.dog_btn_prev = 1
+        self.r2_btn_prev = 1
 
     def stop_all(self):
         """Same contract as the GUI stop button: interrupt current MOTION
@@ -88,6 +102,8 @@ class JoyTeleop(Node):
             self.cancel_cli.call_async(CancelGoal.Request())  # cancel all goals
         self.pub_rec_stop.publish(Empty())   # idempotent; a stopped episode
                                              # gets stopped_by: stop_all
+        self.pub_dog_stop.publish(Empty())   # idempotent; stop-all also ends
+                                             # dog-walk (it is current motion)
         self.pub_beep.publish(Bool(data=True))   # one long beep = stop-all
         if self.beep_timer:
             self.beep_timer.cancel()
@@ -111,6 +127,14 @@ class JoyTeleop(Node):
             if joy.buttons[RECORD_BTN] and not self.rec_btn_prev:
                 self.pub_rec_toggle.publish(Empty())
             self.rec_btn_prev = joy.buttons[RECORD_BTN]
+        if len(joy.buttons) > R1_BTN:
+            if joy.buttons[R1_BTN] and not self.dog_btn_prev:
+                self.pub_dog_toggle.publish(Empty())   # toggle dog-walk mode
+            self.dog_btn_prev = joy.buttons[R1_BTN]
+        if len(joy.buttons) > R2_BTN:
+            if joy.buttons[R2_BTN] and not self.r2_btn_prev:
+                self.get_logger().info('R2 pressed (function TBD)')
+            self.r2_btn_prev = joy.buttons[R2_BTN]
         t = Twist()
         t.linear.x = self.scale(joy.axes[1], VX_MAX) + joy.axes[7] * DPAD_V
         t.linear.y = (self.scale(joy.axes[2], VY_MAX)

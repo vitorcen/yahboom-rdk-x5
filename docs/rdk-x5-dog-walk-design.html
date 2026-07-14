@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dog-Walk Mode — 遛狗模式反应式漫游 — RDK X5</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:980px; padding:24px 20px 80px; background:#0b0e14; color:#cdd6f4;
+         font:15px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:24px; margin:8px 0 2px; }
+  h2 { font-size:18px; margin:40px 0 10px; padding-bottom:6px; border-bottom:1px solid #262b3d; }
+  h2 .en, h1 .en { color:#5d6485; font-size:.72em; font-weight:400; margin-left:10px; }
+  h3 { font-size:15px; margin:22px 0 6px; color:#a6b6e8; }
+  p, li { color:#b9c2e0; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 6px;
+         font:12.5px ui-monospace,Consolas,monospace; color:#8ec8ea; }
+  pre { background:#0f131f; border:1px solid #262b3d; border-radius:8px; padding:12px 16px;
+        overflow-x:auto; font:12.5px/1.7 ui-monospace,Consolas,monospace; color:#cdd6f4; }
+  pre code { background:none; border:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid #262b3d; padding:7px 12px; text-align:left; }
+  th { background:#161a26; color:#a6b6e8; font-weight:600; }
+  td { color:#b9c2e0; }
+  .tldr { background:#12202c; border:1px solid #1f3a50; border-left:4px solid #2b7cb8;
+          border-radius:8px; padding:14px 18px; margin:18px 0; }
+  .warn { background:#2c2312; border:1px solid #50401f; border-left:4px solid #b8862b;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .crit { background:#2c1218; border:1px solid #50202c; border-left:4px solid #b82b45;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .ok   { color:#7ee2a8; } .bad { color:#f38ba8; } .dim { color:#5d6485; }
+  figure { margin:18px 0; } figcaption { font-size:12px; color:#5d6485; margin-top:6px; }
+  svg { max-width:100%; height:auto; display:block; }
+  ol li, ul li { margin:4px 0; }
+  .meta { color:#5d6485; font-size:12.5px; margin-bottom:26px; }
+</style>
+</head>
+<body>
+
+<h1>Dog-Walk Mode<span class="en">reactive wander &amp; sniff, no map</span></h1>
+<div class="meta">RDK X5 Robot · 纯反应式 /scan → /cmd_vel_dog · 2026-07-14 · <span class="dim">设计稿(经 codex 评审修订),待实机</span></div>
+
+<div class="tldr">
+<b>TL;DR</b> — 遛狗模式让小车像小狗一样<b>走走停停闻闻</b>:朝最空的方向<b>三角波变速</b>小跑
+(空旷快,默认上限 0.5 m/s,速度匀速升降像换气),撞见桌脚凳脚一类<b>孤立小障碍</b>就凑近慢下来
+"闻"几秒,闻完后退一小步、朝净空方向转身走到下一处。<b>不需要地图、不需要定位、不需要 Nav2</b>
+—— 就是单帧雷达的反应式行为。手柄 <b>R1 键切换开关</b>(开=两短滴、关=一长滴,GUI 🐕 按钮同款并
+显示已跑秒数),最长 <b>10 分钟</b>自动停;<b>抓杆即接管并退出遛狗</b>、雷达失联立即 fail-close 停车、
+Y 键/全停一并关掉。与导航<b>后到抢占</b>互斥(见 §五)。
+<span class="en">A memoryless reactive behavior. R1 toggles it (two beeps on, one long on off); grabbing the
+stick takes over AND exits dog mode (no silent resume); fail-CLOSE on lidar loss; 3-min hard timeout.</span>
+</div>
+
+<div class="crit">
+<b>本稿已按 codex 评审修订(2026-07-14)。</b> 三处初稿的坏品味被推翻:①"共用 LOW <code>/cmd_vel</code>
+不改 mux"= 假简洁,改为<b>独立通道 <code>/cmd_vel_dog</code></b> 走 mux 最低优先级;②"抓杆临时让权后
+自动续跑"= 人机语义错误,改为<b>抓杆即退出遛狗</b>;③单帧腿判据太脆,改<b>物理宽度 + 多帧一致</b>。
+其余 fail-close、逐状态退出条件、滞回、后向净空检查同步补入。
+</div>
+
+<h2>一、为什么是这个形态<span class="en">Why this shape</span></h2>
+<ul>
+<li><b>"闻的东西"是数据结构问题</b> — 桌脚凳脚在雷达里是<b>一个孤立的小物理宽度近距簇</b>:
+    局部极小、按距离折算的<b>物理宽度</b>落在 [0.02, 0.30] m(不是固定角宽——35°@1.2m≈0.72m 是沙发
+    不是腿)、点数达最低要求、且<b>连续 2–3 帧一致</b>(单帧会被噪声/玻璃/缺测骗)。与墙的区别是墙又宽
+    又连续。<b>不用 odom 验证"静止"</b> —— 腿本来就不动,验证是多余复杂度。</li>
+<li><b>不需要地图</b> — "大范围自主探索"用<b>最空扇区(带滞回低通)+ 随机漂移</b>就能涌现,不必建图规划。
+    引入 SLAM/Nav2 是拿导航的重炮打漫游的麻雀,复杂度不匹配。</li>
+<li><b>安全不能继承 fail-open</b> — safety_stop 雷达挂了会放行(手柄可用性优先);遛狗是无人监督自主运动,
+    <b>必须反过来 fail-close</b>:节点自身每状态查 scan 新鲜度,陈旧/空/点数不足一律零速。双层里节点是
+    fail-close 的那层,safety_stop 只是最后兜底。</li>
+</ul>
+
+<h2>二、拓扑与优先级<span class="en">Topology &amp; priority</span></h2>
+<figure>
+<svg viewBox="0 0 940 320" font-family="system-ui,sans-serif" font-size="13">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#5d6485"/>
+    </marker>
+  </defs>
+  <rect x="20" y="20" width="210" height="42" rx="8" fill="#1a2233" stroke="#2b7cb8"/>
+  <text x="125" y="40" fill="#8ec8ea" text-anchor="middle">joy_teleop</text>
+  <text x="125" y="56" fill="#5d6485" text-anchor="middle" font-size="11">/cmd_vel_joy · P0 HIGH(人)</text>
+
+  <rect x="20" y="76" width="210" height="46" rx="8" fill="#2a2410" stroke="#c8a02b"/>
+  <text x="125" y="96" fill="#e0c060" text-anchor="middle">🐕 dog_walk(新)</text>
+  <text x="125" y="113" fill="#5d6485" text-anchor="middle" font-size="11">/cmd_vel_dog · P1(压住下面两者)</text>
+
+  <rect x="20" y="136" width="210" height="42" rx="8" fill="#241a2e" stroke="#8a5cb8"/>
+  <text x="125" y="156" fill="#c8a6ea" text-anchor="middle">follow-me</text>
+  <text x="125" y="172" fill="#5d6485" text-anchor="middle" font-size="11">/cmd_vel_follow · P2 MID(guard)</text>
+
+  <rect x="20" y="192" width="210" height="42" rx="8" fill="#1a2a1e" stroke="#3a7a4a"/>
+  <text x="125" y="212" fill="#7ee2a8" text-anchor="middle">Nav2 / keyboard</text>
+  <text x="125" y="228" fill="#5d6485" text-anchor="middle" font-size="11">/cmd_vel · P3 LOW</text>
+
+  <rect x="360" y="96" width="150" height="70" rx="10" fill="#161a26" stroke="#262b3d"/>
+  <text x="435" y="124" fill="#cdd6f4" text-anchor="middle">cmd_vel_mux</text>
+  <text x="435" y="142" fill="#5d6485" text-anchor="middle" font-size="11">4 级优先级 + 看门狗</text>
+
+  <rect x="580" y="96" width="150" height="70" rx="10" fill="#2c2312" stroke="#b8862b"/>
+  <text x="655" y="124" fill="#e0b866" text-anchor="middle">safety_stop</text>
+  <text x="655" y="142" fill="#5d6485" text-anchor="middle" font-size="11">净空比例限速</text>
+
+  <rect x="795" y="96" width="125" height="70" rx="10" fill="#161a26" stroke="#262b3d"/>
+  <text x="857" y="124" fill="#cdd6f4" text-anchor="middle">Mcnamu</text>
+  <text x="857" y="142" fill="#5d6485" text-anchor="middle" font-size="11">/cmd_vel_drv</text>
+
+  <line x1="230" y1="41"  x2="360" y2="118" stroke="#5d6485" marker-end="url(#ar)"/>
+  <line x1="230" y1="97"  x2="360" y2="126" stroke="#5d6485" marker-end="url(#ar)"/>
+  <line x1="230" y1="153" x2="360" y2="136" stroke="#5d6485" marker-end="url(#ar)"/>
+  <line x1="230" y1="211" x2="360" y2="150" stroke="#c8a02b" marker-end="url(#ar)"/>
+  <line x1="510" y1="131" x2="580" y2="131" stroke="#5d6485" marker-end="url(#ar)"/>
+  <line x1="730" y1="131" x2="795" y2="131" stroke="#5d6485" marker-end="url(#ar)"/>
+
+  <text x="40" y="278" fill="#b9c2e0" font-size="12.5">🐕 走<tspan fill="#e0c060">独立 P1 通道</tspan>:压住跟随/Nav2 的动作(功能开关不动);手柄(P0)一动杆立刻夺权 → dog 检到 /cmd_vel_joy 非零 → <tspan fill="#f38ba8">主动退出</tspan>;</text>
+  <text x="40" y="298" fill="#b9c2e0" font-size="12.5">启动时顺手<tspan fill="#8ec8ea">取消 Nav2 目标</tspan>;开跟随/点导航目标反向发 /dog_stop 停狗;dog 无 guard(后退不被 vx&lt;0 拦)。</text>
+</svg>
+<figcaption>遛狗独立 P1 通道,在手柄之下、跟随/Nav2 之上:启动即压住那两者的动作而不碰其开关,一停即续上;手柄介入直接令其退出。</figcaption>
+</figure>
+
+<div class="warn">
+<b>初稿错在哪(留档警醒)。</b> 初稿想"共用 LOW <code>/cmd_vel</code> 不改 mux"图省事——但 mux 靠<b>通道</b>
+区分控制源,同一 <code>/cmd_vel</code> 上两个发布者无法仲裁,所谓"遛狗与 Nav2 互斥"只是愿望,真跑起来
+会逐帧抢方向。<b>不同控制源就该有独立通道</b>,这正是 mux 现有哲学(joy/follow/nav 各一条)。加第 4 条
+<code>/cmd_vel_dog</code> 是<b>一致</b>,不是特殊情况。省一个订阅换来不可证明的所有权 = 假简洁。
+</div>
+
+<h2>三、行为状态机<span class="en">Behavior state machine</span></h2>
+<figure>
+<svg viewBox="0 0 940 380" font-family="system-ui,sans-serif" font-size="13">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#7a8299"/>
+    </marker>
+  </defs>
+  <rect x="30" y="160" width="120" height="56" rx="28" fill="#12161f" stroke="#5d6485"/>
+  <text x="90" y="186" fill="#b9c2e0" text-anchor="middle">idle</text>
+  <text x="90" y="203" fill="#5d6485" text-anchor="middle" font-size="10">默认,静默</text>
+
+  <rect x="220" y="160" width="150" height="70" rx="12" fill="#1a2a1e" stroke="#3a7a4a"/>
+  <text x="295" y="186" fill="#7ee2a8" text-anchor="middle">走走 wander</text>
+  <text x="295" y="204" fill="#5d6485" text-anchor="middle" font-size="10.5">最空扇区(滞回)+漂移</text>
+  <text x="295" y="219" fill="#5d6485" text-anchor="middle" font-size="10.5">v≤0.6,净空缩放</text>
+
+  <rect x="440" y="50" width="150" height="66" rx="12" fill="#1e2433" stroke="#4a6a9a"/>
+  <text x="515" y="76" fill="#a6c8ea" text-anchor="middle">凑近 approach</text>
+  <text x="515" y="94" fill="#5d6485" text-anchor="middle" font-size="10.5">锁定同一簇,v≈0.15</text>
+  <text x="515" y="108" fill="#5d6485" text-anchor="middle" font-size="10.5">丢失→放弃回 wander</text>
+
+  <rect x="660" y="50" width="150" height="66" rx="12" fill="#2a1e2e" stroke="#9a5a8a"/>
+  <text x="735" y="76" fill="#e0a6d0" text-anchor="middle">闻闻 sniff</text>
+  <text x="735" y="94" fill="#5d6485" text-anchor="middle" font-size="10.5">停,小幅摆头 ~3s</text>
+  <text x="735" y="108" fill="#5d6485" text-anchor="middle" font-size="10.5">linear=0,wz 振荡</text>
+
+  <rect x="660" y="270" width="150" height="60" rx="12" fill="#2c2312" stroke="#b8862b"/>
+  <text x="735" y="296" fill="#e0b866" text-anchor="middle">后退 backup</text>
+  <text x="735" y="314" fill="#5d6485" text-anchor="middle" font-size="10.5">先查后向净空,~0.12m</text>
+
+  <rect x="440" y="270" width="150" height="60" rx="12" fill="#1e2433" stroke="#4a6a9a"/>
+  <text x="515" y="296" fill="#a6c8ea" text-anchor="middle">转身 turn</text>
+  <text x="515" y="314" fill="#5d6485" text-anchor="middle" font-size="10.5">按净空选向+抑制刚闻方位</text>
+
+  <line x1="150" y1="188" x2="220" y2="192" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="185" y="178" fill="#7ee2a8" text-anchor="middle" font-size="10">R1</text>
+
+  <path d="M330 160 Q400 70 440 86" fill="none" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="392" y="104" fill="#a6c8ea" text-anchor="middle" font-size="10">簇≤1.2m 且多帧一致</text>
+
+  <line x1="590" y1="83" x2="660" y2="83" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="625" y="73" fill="#e0a6d0" text-anchor="middle" font-size="10">≤0.4m</text>
+
+  <line x1="735" y1="116" x2="735" y2="270" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="765" y="195" fill="#e0b866" text-anchor="middle" font-size="10">闻完</text>
+
+  <line x1="660" y1="300" x2="590" y2="300" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="625" y="290" fill="#a6c8ea" text-anchor="middle" font-size="10">退完/受阻</text>
+
+  <path d="M440 288 Q360 270 340 230" fill="none" stroke="#7a8299" marker-end="url(#ar2)"/>
+  <text x="372" y="262" fill="#7ee2a8" text-anchor="middle" font-size="10">转完→下一处</text>
+
+  <path d="M295 230 Q250 320 150 210" fill="none" stroke="#3a3f52" stroke-dasharray="4 3"/>
+  <text x="140" y="270" fill="#5d6485" font-size="10">R1 再按 / Y 全停 / 180s / scan 失效 → idle</text>
+</svg>
+<figcaption>五状态循环,每态都有退出:approach 目标丢失即放弃、backup 后向受阻即跳过、turn 按净空选向。
+任一状态遇 scan 失效或抓杆一律退回 idle(fail-close)。</figcaption>
+</figure>
+
+<h2>四、关键参数与判据<span class="en">Parameters &amp; criteria</span></h2>
+<table>
+<tr><th>项</th><th>值</th><th>依据</th></tr>
+<tr><td>控制频率</td><td>10 Hz</td><td>与 MS200 雷达同频,mux 看门狗 0.5s,不掉线</td></tr>
+<tr><td>空旷速度 <code>max_speed</code></td><td>ros 参数,默认 0.5</td><td>上限;<b>首跑可 <code>-p max_speed:=0.4</code></b> 实测 scan 延迟/误检/刹停再拉满</td></tr>
+<tr><td>三角波步态 gait</td><td>周期 8s,幅度 [0.72,1.0]</td><td><b>匀速升降的变速</b>(常斜率三角波)——像小狗换气般时快时慢;下限抬到 0.72、周期收到 8s = 更活泼</td></tr>
+<tr><td>凑近速度</td><td>0.15 m/s</td><td>物体附近慢,给"闻"留反应余量</td></tr>
+<tr><td>速度缩放(<b>活泼化</b>)</td><td>max_speed·clamp((clear−0.35)/0.45,0,1)·gait</td><td><b>0.8m 净空即给满速</b>(旧版要 1.2m,杂乱房间里被压到 40~60% 才蔫);0.35m 归零(紧贴 0.32 停距/0.3 急刹)</td></tr>
+<tr><td>转向(活泼化)</td><td>WZ_MAX 1.6 / TURN_WZ 1.3 / K_YAW 1.9</td><td>比初版(1.2/0.8/1.5)更利落,转身/纠偏更干脆,不拖泥带水</td></tr>
+<tr><td>scan 新鲜度</td><td>&gt;0.4s 陈旧 = 停</td><td>fail-close;NaN/Inf/0/点数不足按不可通行</td></tr>
+<tr><td>孤立障碍判据</td><td>物理宽度 [0.02,0.30]m + 最少点数 + 连续 2–3 帧一致</td><td>按距离折算宽度,不用固定角宽;多帧防噪声/玻璃误检</td></tr>
+<tr><td>发现距离 / 凑近停距</td><td>≤1.2m / <b>0.32m</b></td><td>停距是<b>雷达到物体</b>距离;雷达在车中段,<b>雷达 0.32m ≈ 车头离物体 ~20cm</b>(真"贴近闻"),紧贴 safety_stop 0.3m 地板,不用降急刹</td></tr>
+<tr><td>随机探索</td><td>每 2~5s 加权随机挑开阔方向</td><td>不总奔最空处(太确定),在开阔扇区里按空旷度加权随机——路径像小狗游走,仍只挑不撞墙的方向</td></tr>
+<tr><td>闻的时长</td><td>~3 s</td><td>小幅左右摆头(wz 振荡)模拟嗅探</td></tr>
+<tr><td>后退量</td><td>vx −0.15 × ~0.8s ≈ 0.12m</td><td><b>先查后向净空</b>,受阻跳过直接转</td></tr>
+<tr><td>漫游漂移 DRIFT_MAX</td><td>±45°</td><td>比初版 ±35° 宽,配合 10 分钟超时roams 更大范围</td></tr>
+<tr><td>方位抑制</td><td>刚闻方位 ±30° 冷却 15s</td><td>只抑制刚闻的方位,不是全局失明;避障永不冷却</td></tr>
+<tr><td>硬超时</td><td>600 s(10 min)</td><td>用户设定,到点自动停 + 长滴</td></tr>
+</table>
+
+<h2>五、开关与安全契约<span class="en">Control &amp; safety contract</span></h2>
+<ul>
+<li><b>R1 = 切换</b>(开/关同一键,照 <a href="rdk-x5-safety-stop.html">safety_stop</a> 的"持有状态 +
+    Empty 翻转"契约):joy_teleop 检到 R1 上升沿 → 发 <code>/dog_toggle</code>(Empty);
+    dog_walk 节点持有 active 翻转。<b>开=两短滴、关=一长滴</b>(走驱动 <code>/Buzzer</code>)。</li>
+<li><b>抓杆 = 接管并退出</b> —— dog_walk 订阅 <code>/cmd_vel_joy</code>,一旦非零即<b>自行退出 active</b>
+    (不是临时让权后续跑)。人介入意味着行为已经错了,恢复自主必须再按一次 R1。</li>
+<li><b>fail-close(遛狗自带的雷达安全)</b> —— 任一状态 scan &gt;0.4s 陈旧或无效,立即发零速;
+    持续失效则退出 active。<b>遛狗本身就是雷达驱动</b>(自带扇区避障 + 这条 fail-close),
+    <b>不依赖 safety_stop、也不碰它的开关</b>:R1 无条件切换,急刹开不开都能跑
+    (急刹只是多一层下游兜底)。<b>不适合无人离场长时间跑。</b></li>
+<li><b>Y 键/全停连带关</b> —— stop-all 契约里加发 <code>/dog_stop</code>,遛狗归入既有停车语义
+    (停"当前动作",不碰 follow 等功能开关的原则不变——遛狗是当前动作,该停)。</li>
+<li><b>三模式互斥 = 停"动作"不停"功能"</b>:遛狗在 mux 排 <b>P1(手柄之下、跟随/Nav2 之上)</b>,
+    所以<b>启遛狗即在总线层压住跟随的追人 / Nav2 的目标运动</b>——跟随服务/开关、Nav2 栈原样在,
+    只是丢总线,遛狗一停立刻续上。这就是"停动作不停功能",<b>不再要求先关跟随</b>。
+    反向后到抢占用单次信号:开跟随 / 点导航目标 时发 <code>/dog_stop</code> 停掉遛狗动作,
+    让新模式接管;启遛狗时还顺手 cancel Nav2 目标(干净停掉 nav 动作)。功能开关始终由用户显式管。</li>
+<li><b>R2 = 先抓索引,功能待定</b>(实测 buttons[9]) —— 本手柄从不按惯例(L1 都是 buttons[6] 而非 4)。</li>
+</ul>
+
+<h2>六、落地形态<span class="en">Deployment</span></h2>
+<ul>
+<li><code>board/home/sunrise/nav_config/dog_walk.py</code> —— 新节点,常开默认 idle,respawn。
+    订阅 <code>/scan</code>(sensor QoS)、<code>/dog_toggle</code>、<code>/dog_stop</code>、
+    <code>/cmd_vel_joy</code>(抓杆退出);发布 <code>/cmd_vel_dog</code>、
+    <code>/dog_active</code>(latched Bool,GUI 指示)、<code>/Buzzer</code>;客户端
+    <code>navigate_to_pose</code> cancel。无急刹门禁(自带雷达避障)。</li>
+<li><code>cmd_vel_mux.py</code> —— 优先级列表插 <code>/cmd_vel_dog</code> 到 <b>P1</b>(joy 之下、
+    follow/nav 之上),<code>self.last</code> 4 项;guard 随 follow 移到 <b>prio==2</b>,
+    dog 无 guard(要后退)。</li>
+<li><code>bringup_mux_launch.py</code> —— 加一个 <code>ExecuteProcess</code>(照 episode_recorder
+    的样子),respawn,不新增 systemd 单元。</li>
+<li><code>joy_teleop.py</code> —— 加 R1/R2 边沿检测(实测 R1=buttons[7]、R2=buttons[9],
+    此 pad 不认惯例),R1 发 <code>/dog_toggle</code>;<code>stop_all()</code> 加发 <code>/dog_stop</code>。
+    R2 已抓到索引,当前仅日志、功能待定。</li>
+<li><b>GUI</b> —— 仪表盘加 🐕 遛狗 普通按钮(非 switch,发 <code>/dog_toggle</code>、镜像
+    <code>/dog_active</code>),活跃时标签跳秒显示已跑时长;两道启动门禁(急刹关/跟随开)会闪提示不启动。
+    日志页订阅 <code>/joy</code>、按键上升沿打印下标(抓 R1/R2 用)。全停按钮加发 <code>/dog_stop</code>。</li>
+</ul>
+
+<h2>七、三问自检<span class="en">Three checks</span></h2>
+<table>
+<tr><th>问</th><th>答</th></tr>
+<tr><td>真问题还是假想?</td><td>真需求(用户要的"走走闻闻"玩法);"验证物体静止"是假问题,已消除。</td></tr>
+<tr><td>有更简单方案吗?</td><td>反应式,无地图/无 Nav2/无 odom。初稿"共用 LOW"式假简洁已被 codex 驳回,改独立通道。</td></tr>
+<tr><td>会破坏什么吗?</td><td>零破坏:独立最低优先级通道不动手柄/跟随/Nav2;节点默认 idle;不新增服务;共用 safety_stop。</td></tr>
+</table>
+
+<p class="dim" style="margin-top:30px">评审:codex(gpt-5.6-sol)2026-07-14;实现:Opus 子 agent。首版最小交付 = 漫游 + 调查停留 +
+受控脱离 + fail-close,摆头/GUI 指示为增量。</p>
+
+</body>
+</html>
