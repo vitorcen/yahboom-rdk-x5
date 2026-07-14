@@ -29,6 +29,11 @@ metadata:
    "每 10-20 s 一次的崩溃循环"（2026-07-11 7.5 V 实测）——此时软件链路查什么都"正常"，
    唯一正确动作是充电。诊断口诀：指令峰值(cmd_vel_joy)对比实际峰值(/odom twist)。
 
+2026-07-13:DWB 提速 max_vel_x/max_speed_xy 0.18/0.26→0.6,decel_lim ±1.0
+(板上 nav_params_tuned.yaml,留 .bak;横移 0.26 不动=后轮扭矩未修)。
+注意 nav_start.sh 的 systemd-run 已过时——nav2 现在是正式自启单元,直接
+systemctl start/stop nav2,systemd-run 会报"Unit already exists"。
+
 下一步候选：遥控建全屋图（Task4）、TEB 换 DWB（麦轮横移）、collision_monitor、
 手机网页摇杆发 `/cmd_vel_joy`（走同一 mux）。远期路线见
 `docs/rdk-x5-official-experiments-and-advanced-practice.html`（本 mux 即 cmd_vel_guard 种子）。

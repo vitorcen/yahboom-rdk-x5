@@ -19,7 +19,11 @@ Follow-me 融合跟随(v3 2026-07-12,实测可用,详见 docs/rdk-x5-follow-me-f
   一条独立 target,手势在 hand-only target 上要按包含关系归属;③MOT min_score 0.8
   转身就断 ID,降 0.3;④速度沿车头发=方向错,麦轮必须矢量化;⑤systemd 下
   trap 'kill 0' 自杀成重启环、无 HOME 则 ROS 日志目录崩,service 要给 HOME 和
-  ROS_LOG_DIR;⑥pgrep -f 会匹配含关键词的 ssh 命令自身(多次上当)。
+  ROS_LOG_DIR;⑥pgrep -f 会匹配含关键词的 ssh 命令自身(多次上当);
+  ⑦开机相机/BPU 未就绪链条秒挂,默认 5 次/10s burst limit 把单元打成 failed
+  ="重启后开关自己灭"——2026-07-13 修 Restart=always + StartLimitIntervalSec=0
+  + TimeoutStopSec=25(感知链 10s 停不完曾被 SIGKILL);⑧手离相机太近会被
+  hand_lmk 尺寸过滤直接丢弃("Move hand far from sensor!"),手势要在 1.5-2m 外做。
 - 待做:故障注入测试、物理停车距离回填 FRONT_STOP。
 
 相关:[[rdk-x5-robot-status]] [[rdk-x5-nav2-plan]] [[feedback-atomic-commits]]

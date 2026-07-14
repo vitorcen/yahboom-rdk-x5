@@ -2,6 +2,10 @@
 Description=Follow-me: BPU perception chain + follow node (OK lock / Palm stop)
 After=mipi-cam.service nav-bringup.service ms200-lidar.service
 Wants=mipi-cam.service nav-bringup.service ms200-lidar.service
+# Never give up retrying: at boot the camera/BPU may not be ready yet and the
+# chain dies fast — the default 5-tries-in-10s burst limit then parked the
+# unit as failed, which is why the GUI switch showed OFF after a reboot.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -10,10 +14,12 @@ Environment=HOME=/root
 Environment=ROS_LOG_DIR=/tmp/roslog
 ExecStartPre=/bin/mkdir -p /tmp/roslog
 ExecStart=/home/sunrise/follow/follow_start.sh
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=5
 KillMode=mixed
-TimeoutStopSec=10
+# The perception chain needs >10 s to wind down; 10 s used to end in SIGKILL
+# and a spurious failed/timeout state.
+TimeoutStopSec=25
 
 [Install]
 WantedBy=multi-user.target
