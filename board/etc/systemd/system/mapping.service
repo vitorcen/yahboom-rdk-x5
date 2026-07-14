@@ -1,0 +1,21 @@
+[Unit]
+Description=Cartographer mapping (exclusive with nav2: both own the map->odom TF)
+After=nav-bringup.service ms200-lidar.service
+Wants=nav-bringup.service ms200-lidar.service
+# Starting mapping stops nav2 and vice versa; never both.
+Conflicts=nav2.service
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+# cartographer_launch.py = cartographer_node + occupancy_grid only; the lidar,
+# chassis driver and mux come from the always-on services above (the vendor's
+# map_cartographer_launch.py would double-launch them).
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; source /home/sunrise/software/library_ws/install/setup.bash; source /home/sunrise/yahboomcar_ws/install/setup.bash; exec ros2 launch yahboomcar_nav cartographer_launch.py"
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

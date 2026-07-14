@@ -134,3 +134,53 @@ if (invoke) {
   setInterval(followRefresh, 10000);
   $('mFollow').onclick = () => setFollow(!$('mFollow').classList.contains('on'));
 } else $('mFollow').style.display = 'none';
+
+// ---- Mapping mode: mapping.service Conflicts= nav2, so the switch swaps the
+// whole stack. Save button only exists while mapping (save = overwrite map,
+// switch off without saving = discard and go back to nav) ----
+let mappingBusy = false;                           // handover in flight: freeze UI
+async function mappingRefresh() {
+  if (mappingBusy) return;
+  try {
+    const on = (await invoke('mapping_get')).trim() === 'active';
+    $('mMapping').classList.toggle('on', on);
+    $('mMapping').textContent = on ? '🗺 建图中' : '🗺 建图';
+    $('mMapSave').style.display = on ? '' : 'none';
+  } catch { /* board unreachable: keep last look */ }
+}
+if (invoke) {
+  mappingRefresh();
+  setInterval(mappingRefresh, 10000);
+  $('mMapping').onclick = async () => {
+    if (mappingBusy) return;
+    const b = $('mMapping');
+    const on = !b.classList.contains('on');
+    if (on) $('mMap').click();                     // mapping is watched in map view
+    mappingBusy = true;
+    b.disabled = true;
+    b.textContent = on ? '🗺 启动中…' : '🗺 停止中…';
+    $('mMapSave').style.display = 'none';
+    try {
+      await invoke('mapping_set', { on });         // returns instantly (no-block)
+      // poll until the ~20 s nav2<->cartographer handover settles
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        try { if (((await invoke('mapping_get')).trim() === 'active') === on) break; }
+        catch { /* transient ssh miss: keep polling */ }
+      }
+    } catch (e) { console.error(e); }
+    mappingBusy = false;
+    b.disabled = false;
+    mappingRefresh();
+  };
+  $('mMapSave').onclick = async () => {
+    const b = $('mMapSave');
+    b.disabled = true; b.textContent = '💾 保存中…';
+    try { await invoke('map_save'); b.textContent = '💾 已保存'; }
+    catch (e) { b.textContent = '💾 保存失败'; console.error(e); }
+    finally {
+      b.disabled = false;
+      setTimeout(() => { b.textContent = '💾 存图'; mappingRefresh(); }, 3000);
+    }
+  };
+} else { $('mMapping').style.display = 'none'; $('mMapSave').style.display = 'none'; }

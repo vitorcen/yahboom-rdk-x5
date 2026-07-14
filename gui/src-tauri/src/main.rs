@@ -630,6 +630,37 @@ async fn follow_set(on: bool) -> Result<String, String> {
     ssh_bg(vec![format!("{cmd} && echo ok")]).await
 }
 
+/// Mapping mode state: "active" | "inactive" | ... (echo wrapper as above).
+#[tauri::command]
+async fn mapping_get() -> Result<String, String> {
+    ssh_bg(vec!["echo $(systemctl is-active mapping)".into()]).await
+}
+
+/// Toggle mapping mode. start/stop only — never enabled: mapping must not
+/// survive a reboot. Conflicts= in the unit swaps nav2 out automatically on
+/// start; on stop we bring nav2 back explicitly (Conflicts is not a Wants).
+#[tauri::command]
+async fn mapping_set(on: bool) -> Result<String, String> {
+    // Fire-and-forget on the board: the nav2<->mapping handover takes ~20 s
+    // and blocking the ssh (and the GUI click) on it feels dead. The GUI
+    // polls mapping_get until the target state settles.
+    // NB: the off-branch ends in '&' — nothing may be appended after it
+    // ('&; echo' is a bash syntax error that silently no-ops the whole line).
+    let cmd = if on {
+        "systemctl reset-failed mapping 2>/dev/null; systemctl start --no-block mapping; echo ok"
+    } else {
+        "nohup bash -c 'systemctl stop mapping; systemctl reset-failed nav2 2>/dev/null; systemctl start nav2' >/dev/null 2>&1 & echo ok"
+    };
+    ssh_bg(vec![cmd.to_string()]).await
+}
+
+/// Save the live cartographer map over room.{yaml,pgm} (one .bak generation),
+/// stop mapping and restart nav2 on the new map. ~10-20 s.
+#[tauri::command]
+async fn map_save() -> Result<String, String> {
+    ssh_bg(vec!["bash /home/sunrise/nav_config/map_save.sh".into()]).await
+}
+
 /// Reboot / power off the board. Action is a strict whitelist, and the UI
 /// arms the button first (two clicks) so a stray click can't cut power.
 #[tauri::command]
@@ -802,6 +833,9 @@ fn main() {
             stack_info,
             follow_get,
             follow_set,
+            mapping_get,
+            mapping_set,
+            map_save,
             ep_list,
             ep_export,
             ep_pull,

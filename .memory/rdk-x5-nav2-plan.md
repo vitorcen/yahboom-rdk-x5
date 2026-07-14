@@ -34,7 +34,21 @@ metadata:
 注意 nav_start.sh 的 systemd-run 已过时——nav2 现在是正式自启单元,直接
 systemctl start/stop nav2,systemd-run 会报"Unit already exists"。
 
-下一步候选：遥控建全屋图（Task4）、TEB 换 DWB（麦轮横移）、collision_monitor、
+2026-07-14 建图工作流上线(docs/rdk-x5-mapping-workflow.html):mapping.service
+(仅 cartographer 本体,厂商 map_cartographer_launch 会双开雷达/驱动不能用)
+`Conflicts=nav2.service` 做互斥开关;GUI 🗺建图按钮 + 💾存图(map_save.sh:备份
+room.bak.*→map_saver_cli 覆盖→自动切回 nav2)。教训:①nav2 停止必超时进 failed,
+start 前必须 reset-failed;nav2.service 加 TimeoutStopSec=20 压缩 map→odom TF
+交接窗;②存图后 AMCL 种在地图原点=建图起点,走圈要回起点结束;③"存图后边界
+变淡/缺口"=map_saver 三值化丢掉置信度 25-65 的弱墙(建图时看着有)——GUI 栅格
+渲染四档对齐阈值,暗橙=存图会消失的弱墙,建图时开过去(≤3.5m,厂商 lua
+max_range)补扫;④切换走 --no-block/nohup 后台+前端轮询,否则 ssh 阻塞 20s;
+以 & 结尾的命令再拼 "; echo ok" = bash 语法错误静默全失效(踩过);⑤浏览器导航
+改点击即发目标(📍图钉常驻,车→目标方向为终点朝向)——麦轮不在乎终点朝向,
+RViz 式拖方向白费;NavFn 无 smoother 路径天然 45° 锯齿,实走由 DWB 切角,
+候选优化=挂 smoother_server。全屋图待实走。
+
+下一步候选：遥控建全屋图（Task4 实走）、TEB 换 DWB（麦轮横移）、collision_monitor、
 手机网页摇杆发 `/cmd_vel_joy`（走同一 mux）。远期路线见
 `docs/rdk-x5-official-experiments-and-advanced-practice.html`（本 mux 即 cmd_vel_guard 种子）。
 相关：[[rdk-x5-robot-status]]

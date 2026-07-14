@@ -14,7 +14,7 @@ let mode = 'map';
 let scanMsg = null, mapMsg = null, planMsg = null;
 let frames = 0, lastT = performance.now(), fps = 0;
 let viewRange = 4.0, zoom = 1.0;
-let goalDrag = null;
+let goalPin = null;                   // world coords of the latest goal; shown until replaced/stopped
 const tfDict = {};
 const mapCanvas = document.createElement('canvas');
 
@@ -65,8 +65,12 @@ function rasterizeMap() {
     const row = (i / w) | 0, col = i % w;
     const j = ((h - 1 - row) * w + col) * 4;
     let r, gg, b;
+    // Thresholds match map_saver_cli's trinary save (free<25, occupied>65):
+    // 25..65 is "weak" — visible while mapping but DROPPED on save. Painted
+    // dim so gaps-to-be show up live; drive within lidar range to firm them.
     if (v < 0)       { r=26; gg=30; b=44; }
-    else if (v < 50) { r=52; gg=60; b=82; }
+    else if (v <= 25){ r=52; gg=60; b=82; }
+    else if (v <= 65){ r=124; gg=96; b=58; }
     else             { r=249; gg=169; b=74; }
     img.data[j]=r; img.data[j+1]=gg; img.data[j+2]=b; img.data[j+3]=255;
   }
@@ -127,9 +131,15 @@ function renderMap() {
     cx.lineTo(X + 8*Math.cos(pose.yaw-2.5), Y - 8*Math.sin(pose.yaw-2.5));
     cx.closePath(); cx.fill();
   }
-  if (goalDrag && goalDrag.x1 !== undefined) {
-    cx.strokeStyle = '#f9e2af'; cx.lineWidth = 2; cx.beginPath();
-    cx.moveTo(goalDrag.x0, goalDrag.y0); cx.lineTo(goalDrag.x1, goalDrag.y1); cx.stroke();
+  if (goalPin) {                       // map-pin at the active goal
+    const X = t.px(goalPin.x), Y = t.py(goalPin.y);
+    cx.fillStyle = '#f9e2af'; cx.strokeStyle = '#0b0e14'; cx.lineWidth = 1.5;
+    cx.beginPath();
+    cx.arc(X, Y - 12, 7, Math.PI*0.75, Math.PI*0.25);
+    cx.lineTo(X, Y);                  // teardrop tip on the goal point
+    cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = '#0b0e14';
+    cx.beginPath(); cx.arc(X, Y - 12, 2.5, 0, Math.PI*2); cx.fill();
   }
   stats.textContent = `${zoom.toFixed(1)}× · ${fps.toFixed(0)}fps`
     + (pose ? ` · (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)})` : ' · 等TF…');
@@ -168,33 +178,27 @@ function canvasXY(e) {
   const r = cv.getBoundingClientRect();
   return [(e.clientX-r.left)*cv.width/r.width, (e.clientY-r.top)*cv.height/r.height];
 }
-cv.addEventListener('mousedown', e => {
+// Consumer-style goal setting: one click = pin drops + goal sent. Heading is
+// derived (robot -> goal) — a mecanum base doesn't care about final yaw, so
+// asking the user to drag a direction (RViz-style) bought nothing.
+cv.addEventListener('click', e => {
   if (mode !== 'map' || !mapMsg) return;
-  const [x0, y0] = canvasXY(e); goalDrag = { x0, y0 };
-});
-cv.addEventListener('mousemove', e => {
-  if (!goalDrag) return;
-  [goalDrag.x1, goalDrag.y1] = canvasXY(e);
-  render();
-});
-cv.addEventListener('mouseup', () => {
-  if (goalDrag && !connected()) {
-    toast('⚠️ 未连接，目标没有发出'); goalDrag = null; render(); return;
-  }
-  if (!goalDrag || !mapMsg) { goalDrag = null; return; }
+  if (!connected()) { toast('⚠️ 未连接，目标没有发出'); return; }
+  const [px, py] = canvasXY(e);
   const t = w2c();
-  const gx = t.wx(goalDrag.x0), gy = t.wy(goalDrag.y0);
-  const yaw = (goalDrag.x1 !== undefined)
-    ? Math.atan2(-(goalDrag.y1-goalDrag.y0), goalDrag.x1-goalDrag.x0) : 0;
-  goalDrag = null;
+  const gx = t.wx(px), gy = t.wy(py);
+  const pose = robotPose();
+  const yaw = pose ? Math.atan2(gy - pose.y, gx - pose.x) : 0;
+  goalPin = { x: gx, y: gy };
   cancelAllGoals();
   planMsg = null;
+  render();                            // pin shows immediately, plan line follows
   setTimeout(() => {
     if (!send({ op:'publish', topic:'/goal_pose', msg:{
       header:{ frame_id:'map', stamp:{sec:0, nanosec:0} },
       pose:{ position:{x:gx, y:gy, z:0},
              orientation:{x:0, y:0, z:Math.sin(yaw/2), w:Math.cos(yaw/2)} } } })) return;
-    toast(`🎯 新目标 (${gx.toFixed(2)}, ${gy.toFixed(2)}, ${(yaw*180/Math.PI).toFixed(0)}°)，旧目标已终止`);
+    toast(`📍 新目标 (${gx.toFixed(2)}, ${gy.toFixed(2)})，旧目标已终止`);
   }, 200);
 });
 cv.addEventListener('wheel', e => {
@@ -218,6 +222,7 @@ $('stop').onclick = () => {
   }
   cancelAllGoals();
   planMsg = null;
+  goalPin = null;
   // Brake on /cmd_vel_joy (HIGHEST mux priority): zeros here preempt
   // follow-me and Nav2 instantly; /cmd_vel zeros would lose to follow.
   for (let i = 0; i < 8; i++) setTimeout(() => pubTwist(0,0,0,'/cmd_vel_joy'), i*80);

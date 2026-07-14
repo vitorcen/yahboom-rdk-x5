@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mapping Workflow — GUI 一键建图/存图 — RDK X5</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:980px; padding:24px 20px 80px; background:#0b0e14; color:#cdd6f4;
+         font:15px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:24px; margin:8px 0 2px; }
+  h2 { font-size:18px; margin:40px 0 10px; padding-bottom:6px; border-bottom:1px solid #262b3d; }
+  h2 .en, h1 .en { color:#5d6485; font-size:.72em; font-weight:400; margin-left:10px; }
+  h3 { font-size:15px; margin:22px 0 6px; color:#a6b6e8; }
+  p, li { color:#b9c2e0; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 6px;
+         font:12.5px ui-monospace,Consolas,monospace; color:#8ec8ea; }
+  pre { background:#0f131f; border:1px solid #262b3d; border-radius:8px; padding:12px 16px;
+        overflow-x:auto; font:12.5px/1.7 ui-monospace,Consolas,monospace; color:#cdd6f4; }
+  pre code { background:none; border:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid #262b3d; padding:7px 12px; text-align:left; }
+  th { background:#161a26; color:#a6b6e8; font-weight:600; }
+  td { color:#b9c2e0; }
+  .tldr { background:#12202c; border:1px solid #1f3a50; border-left:4px solid #2b7cb8;
+          border-radius:8px; padding:14px 18px; margin:18px 0; }
+  .warn { background:#2c2312; border:1px solid #50401f; border-left:4px solid #b8862b;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .ok   { color:#7ee2a8; } .bad { color:#f38ba8; } .dim { color:#5d6485; }
+  figure { margin:18px 0; } figcaption { font-size:12px; color:#5d6485; margin-top:6px; }
+  svg { max-width:100%; height:auto; display:block; }
+  ol li, ul li { margin:4px 0; }
+  .meta { color:#5d6485; font-size:12.5px; margin-bottom:26px; }
+</style>
+</head>
+<body>
+
+<h1>Mapping Workflow<span class="en">GUI one-key mapping &amp; map save</span></h1>
+<div class="meta">RDK X5 Robot · cartographer + Nav2 · 2026-07-14 · <span class="ok">已实施,板上切换/存图验证</span></div>
+
+<div class="tldr">
+<b>TL;DR</b> — 建图与导航<b>互斥</b>(都要发布 <code>map→odom</code> TF),用一条 systemd
+<code>Conflicts=</code> 关系做成一个开关:GUI 🗺 建图 开 = <code>systemctl start mapping</code>,
+systemd 自动把 nav2 换下场;手柄慢速遥控走一圈,浏览器地图画布实时看到 cartographer 的
+<code>/map</code> 长出来;点 💾 存图 = <code>map_saver_cli</code> 覆盖
+<code>room.{yaml,pgm}</code>(留一代 <code>.bak</code>)并自动切回导航。直接关开关 = 丢弃重来。
+<span class="en">Mapping and navigation are mutually exclusive (both own the map→odom TF);
+one systemd Conflicts= edge turns the swap into a single GUI switch. Save overwrites the nav map
+(one .bak generation) and flips back to Nav2 automatically.</span>
+</div>
+
+<h2>一、为什么是这个形态<span class="en">Why this shape</span></h2>
+<ul>
+<li><b>互斥是物理事实,不是策略</b> — cartographer 与 AMCL 都发布 <code>map→odom</code>,
+    同时跑 = TF 打架、定位乱跳。与其在应用层判断"现在是什么模式",不如让 systemd 的
+    <code>Conflicts=nav2.service</code> 保证<b>任何时刻最多一个在场</b>:启建图自动停导航,
+    启导航自动停建图,零特殊情况。</li>
+<li><b>只启 cartographer 本体</b> — 厂商 <code>map_cartographer_launch.py</code> 会把雷达+
+    底盘驱动再拉一份,和常驻的 <code>ms200-lidar</code>/<code>nav-bringup</code> 服务双开抢设备。
+    <code>mapping.service</code> 只跑 <code>cartographer_launch.py</code>
+    (cartographer_node + occupancy_grid),传感器和底盘全部复用现有服务。</li>
+<li><b>不 enable,只 start</b> — 建图是一次性操作,重启板子后绝不应该自动回到建图模式;
+    nav2 保持 enabled,开机永远是导航形态。</li>
+<li><b>GUI 画布零改动</b> — 浏览器本来就订阅 <code>/map</code>;建图时发布者从 map_server
+    换成 occupancy_grid(1 Hz),地图自然实时生长,一行前端代码都不用加。</li>
+</ul>
+
+<h2>二、架构<span class="en">Architecture</span></h2>
+<figure>
+<svg viewBox="0 0 940 470" font-family="system-ui,sans-serif" font-size="13">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#5d6485"/>
+    </marker>
+    <marker id="arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#b8862b"/>
+    </marker>
+  </defs>
+
+  <!-- workstation column -->
+  <rect x="15" y="20" width="250" height="200" rx="10" fill="#12161f" stroke="#262b3d"/>
+  <text x="30" y="45" fill="#5d6485" font-size="12">工作站 GUI (Tauri)</text>
+  <rect x="35" y="60" width="210" height="52" rx="8" fill="#1a2233" stroke="#2b7cb8"/>
+  <text x="140" y="82" fill="#8ec8ea" text-anchor="middle">🗺 建图 开关</text>
+  <text x="140" y="100" fill="#5d6485" text-anchor="middle" font-size="11">mapping_set(on) → ssh</text>
+  <rect x="35" y="128" width="210" height="52" rx="8" fill="#1a2a1e" stroke="#3a7a4a"/>
+  <text x="140" y="150" fill="#7ee2a8" text-anchor="middle">💾 存图(建图中才出现)</text>
+  <text x="140" y="168" fill="#5d6485" text-anchor="middle" font-size="11">map_save → ssh map_save.sh</text>
+
+  <!-- browser canvas -->
+  <rect x="15" y="250" width="250" height="90" rx="10" fill="#12161f" stroke="#262b3d"/>
+  <text x="30" y="275" fill="#5d6485" font-size="12">地图画布 (rosbridge)</text>
+  <text x="140" y="303" fill="#b9c2e0" text-anchor="middle">订阅 /map,建图时 1 Hz</text>
+  <text x="140" y="323" fill="#b9c2e0" text-anchor="middle">实时看地图生长</text>
+
+  <!-- gamepad -->
+  <rect x="15" y="370" width="250" height="70" rx="10" fill="#12161f" stroke="#262b3d"/>
+  <text x="30" y="395" fill="#5d6485" font-size="12">手柄</text>
+  <text x="140" y="420" fill="#b9c2e0" text-anchor="middle">慢速(0.2~0.3)遥控走一圈</text>
+
+  <!-- systemd exclusivity block -->
+  <rect x="330" y="20" width="580" height="200" rx="10" fill="#12161f" stroke="#262b3d"/>
+  <text x="345" y="45" fill="#5d6485" font-size="12">板上 systemd — Conflicts= 互斥(最多一个在场)</text>
+
+  <rect x="355" y="60" width="240" height="130" rx="8" fill="#1a2233" stroke="#2b7cb8"/>
+  <text x="475" y="84" fill="#8ec8ea" text-anchor="middle" font-weight="600">mapping.service(不自启)</text>
+  <text x="475" y="106" fill="#b9c2e0" text-anchor="middle" font-size="12">cartographer_node</text>
+  <text x="475" y="126" fill="#b9c2e0" text-anchor="middle" font-size="12">occupancy_grid → /map 1Hz</text>
+  <text x="475" y="148" fill="#5d6485" text-anchor="middle" font-size="11">发布 map→odom TF</text>
+  <text x="475" y="168" fill="#5d6485" text-anchor="middle" font-size="11">max_range 3.5m · 用 /odom</text>
+
+  <rect x="655" y="60" width="240" height="130" rx="8" fill="#241a2e" stroke="#8a5fb0"/>
+  <text x="775" y="84" fill="#c9a6e8" text-anchor="middle" font-weight="600">nav2.service(开机自启)</text>
+  <text x="775" y="106" fill="#b9c2e0" text-anchor="middle" font-size="12">AMCL + planner + DWB</text>
+  <text x="775" y="126" fill="#b9c2e0" text-anchor="middle" font-size="12">map_server → /map(latched)</text>
+  <text x="775" y="148" fill="#5d6485" text-anchor="middle" font-size="11">也发布 map→odom TF</text>
+  <text x="775" y="168" fill="#5d6485" text-anchor="middle" font-size="11">TimeoutStopSec=20 缩短交接</text>
+
+  <line x1="595" y1="125" x2="655" y2="125" stroke="#b8862b" stroke-width="2" marker-end="url(#arR)"/>
+  <line x1="655" y1="145" x2="595" y2="145" stroke="#b8862b" stroke-width="2" marker-end="url(#arR)"/>
+  <text x="625" y="112" fill="#b8862b" text-anchor="middle" font-size="11">Conflicts</text>
+
+  <!-- shared services -->
+  <rect x="330" y="250" width="580" height="90" rx="10" fill="#12161f" stroke="#262b3d"/>
+  <text x="345" y="275" fill="#5d6485" font-size="12">常驻服务(两种模式共用,不动)</text>
+  <text x="620" y="303" fill="#b9c2e0" text-anchor="middle">ms200-lidar(/scan) · nav-bringup(驱动 /odom + joy_teleop + mux)</text>
+  <text x="620" y="323" fill="#b9c2e0" text-anchor="middle">safety_stop 急刹 · episode_recorder</text>
+
+  <!-- map files -->
+  <rect x="330" y="370" width="580" height="70" rx="10" fill="#1a2a1e" stroke="#3a7a4a"/>
+  <text x="345" y="395" fill="#5d6485" font-size="12">地图文件(板上,不入仓库)</text>
+  <text x="620" y="420" fill="#7ee2a8" text-anchor="middle">/home/sunrise/maps/room.{yaml,pgm} ← map_save.sh 覆盖,旧图留 room.bak.*</text>
+
+  <!-- edges -->
+  <line x1="245" y1="86" x2="355" y2="100" stroke="#5d6485" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="245" y1="154" x2="330" y2="405" stroke="#5d6485" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="475" y1="190" x2="265" y2="290" stroke="#5d6485" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+  <text x="360" y="238" fill="#5d6485" font-size="11">/map (rosbridge)</text>
+  <line x1="265" y1="400" x2="330" y2="330" stroke="#5d6485" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="282" y="372" fill="#5d6485" font-size="11">/joy</text>
+  <line x1="620" y1="340" x2="620" y2="370" stroke="#5d6485" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="640" y="360" fill="#5d6485" font-size="11">/scan /odom TF</text>
+</svg>
+<figcaption>建图/导航互斥切换:GUI 开关 → systemd Conflicts 交接;传感器与底盘服务两种模式共用。
+<span class="en">The mapping/nav swap is one systemd Conflicts= edge; sensors and chassis services are shared.</span></figcaption>
+</figure>
+
+<h2>三、操作流程<span class="en">Operating procedure</span></h2>
+<ol>
+<li>GUI 仪表盘打开 <b>🗺 建图</b> — nav2 自动停(约 20 s),cartographer 从车当前位置起图;
+    画布切到"地图"模式看 <code>/map</code> 实时生长。</li>
+<li><b>手柄慢速遥控走一圈</b> — 0.2~0.3 速度、拐弯别甩,每个房间进去转一下,门口过道多走一次;
+    <b>回到起点附近结束</b>让回环闭合抹掉累积误差。单房间 5~10 min,全屋 15~30 min。</li>
+<li>点 <b>💾 存图</b> — <code>map_save.sh</code>:旧图备份 <code>room.bak.*</code> →
+    <code>map_saver_cli</code> 覆盖 <code>room.{yaml,pgm}</code> → 停建图 → 起 nav2(新图生效,
+    AMCL 自动种在地图原点 = 建图起点)。</li>
+<li>建歪了想重来:直接<b>关掉建图开关</b> = 丢弃本次,恢复导航(旧图不受影响);再开一次从头建。</li>
+</ol>
+
+<div class="warn"><b>⚠ 存图后车在哪</b> — nav2 重启会把 AMCL 种在<b>地图原点(建图起点)</b>。
+按第 2 步"回到起点附近结束"操作,定位一开始就是对的;若结束在别处,需在浏览器里拖一次
+初始位姿或开车走两步等 AMCL 收敛。
+<span class="en">After save, AMCL is seeded at the map origin (= mapping start point) — end your
+mapping loop near where you started.</span></div>
+
+<h2>四、控制面<span class="en">Control surface</span></h2>
+<table>
+<tr><th>动作</th><th>入口</th><th>实现</th></tr>
+<tr><td>开始建图</td><td>GUI 🗺 建图 开</td><td><code>mapping_set(true)</code> → ssh <code>systemctl start mapping</code>(Conflicts 自动停 nav2)</td></tr>
+<tr><td>保存地图</td><td>GUI 💾 存图(建图中才出现)</td><td><code>map_save</code> → ssh <code>map_save.sh</code>:备份→<code>map_saver_cli</code>→停建图→起 nav2</td></tr>
+<tr><td>丢弃重来</td><td>GUI 🗺 建图 关</td><td><code>mapping_set(false)</code> → <code>systemctl stop mapping; reset-failed nav2; start nav2</code></td></tr>
+<tr><td>遥控走圈</td><td>手柄(现有链路)</td><td>joy_teleop → mux → 驱动;建图/导航模式无差别</td></tr>
+</table>
+
+<h2>五、实战教训<span class="en">Lessons learned</span></h2>
+<ul>
+<li><b>厂商建图 launch 不能直接用</b> — <code>map_cartographer_launch.py</code> 内嵌
+    laser_bringup(雷达+驱动),与常驻服务双开抢串口/设备;只取
+    <code>cartographer_launch.py</code> 这一半。</li>
+<li><b>nav2 停止必然超时进 failed</b> — 它的 launch 树 20 s 内停不完,SIGKILL 收尾,
+    单元状态留在 <code>failed</code>;若不 <code>reset-failed</code> 直接
+    <code>systemctl start</code> 可能被旧状态干扰。<code>mapping_set(false)</code> 与
+    <code>map_save.sh</code> 之后的 <code>start nav2</code> 前都已内置
+    <code>reset-failed</code>(与 <code>nav_start.sh</code> 的历史坑同源)。</li>
+<li><b>切换有 ~20 s 交接窗</b> — nav2 停止期间 AMCL 与 cartographer 可能短暂同时发
+    <code>map→odom</code>,画布上地图会跳一下;等建图开关稳定亮起再开始走圈即可。
+    <code>TimeoutStopSec=20</code> 已把窗口压到最短。</li>
+<li><b>cartographer 配置沿用厂商 lua</b> — <code>max_range 3.5 m</code> 偏保守
+    (MS200 标称 12 m),全屋建图要多贴墙走;先零改动跑通,嫌慢再调
+    <code>cartographer_config.lua</code>。</li>
+</ul>
+
+<h2>六、地图会"偏"吗 &amp; 业界持续改图做法<span class="en">Map drift &amp; lifelong mapping in industry</span></h2>
+<p><code>room.pgm</code> 是静态文件,永不自己变。会漂的是 <b>AMCL 定位</b>:环境变了
+(家具挪位)雷达和旧图对不上;或开机位置不在建图起点。小改动 AMCL 能容忍,大改动重建。</p>
+<p><b>业界对"小物件持续变动"的分层处理</b>(不是改静态图,而是分层叠加):</p>
+<table>
+<tr><th>层次</th><th>做法</th><th>代表</th></tr>
+<tr><td>秒级·临时障碍</td><td><b>costmap 叠加层</b>:静态图不动,雷达实时命中写入
+    obstacle/voxel layer,导航绕行,物体走了自动衰减。<span class="ok">Nav2 默认已有,本车在用</span></td>
+    <td>Nav2 costmap_2d,STVL</td></tr>
+<tr><td>天级·半永久变动</td><td><b>lifelong mapping / 持续定位建图</b>:定位的同时维护弹性
+    pose-graph,新扫描持续融合进图,定期序列化替换旧图。ROS2 生态的标准答案是
+    <b>SLAM Toolbox</b> 的 localization/lifelong 模式(可平替 AMCL)</td>
+    <td>SLAM Toolbox,RTAB-Map 增量记忆</td></tr>
+<tr><td>商用扫地机做法</td><td>每次任务后台重跑局部建图,与主图做<b>变化检测+图合并</b>,
+    置信度够才提交;用户看到的图"自己慢慢变对"</td><td>Roborock/iRobot 等私有实现</td></tr>
+</table>
+<p>本车现状:第一层已覆盖(临时障碍能绕);第二层若以后想要"图自动跟着家里变",
+路线是把 AMCL 换成 SLAM Toolbox localization 模式——留作候选实验,不急。</p>
+
+<h2>七、文件清单<span class="en">Files</span></h2>
+<table>
+<tr><th>文件</th><th>说明</th></tr>
+<tr><td><code>board/etc/systemd/system/mapping.service</code></td><td>建图单元:仅 cartographer,<code>Conflicts=nav2.service</code>,不 enable</td></tr>
+<tr><td><code>board/home/sunrise/nav_config/map_save.sh</code></td><td>存图脚本:备份→map_saver_cli→停建图→起 nav2</td></tr>
+<tr><td><code>board/etc/systemd/system/nav2.service</code></td><td>加 <code>KillMode=mixed + TimeoutStopSec=20</code> 缩短交接窗</td></tr>
+<tr><td><code>gui/src-tauri/src/main.rs</code></td><td><code>mapping_get / mapping_set / map_save</code> 三个 ssh 命令</td></tr>
+<tr><td><code>gui/ui/index.html + js/health.js</code></td><td>🗺 建图 sw 开关 + 💾 存图按钮(建图中才显示),10 s 轮询镜像真实状态</td></tr>
+</table>
+
+</body>
+</html>
