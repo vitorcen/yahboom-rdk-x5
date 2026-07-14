@@ -21,6 +21,8 @@
 | 系统体检与硬件拓扑 | ✅ | [`docs/rdk-x5-system-report.html`](docs/rdk-x5-system-report.html) |
 | 雷达/相机/底盘打通 + 浏览器仪表盘 | ✅ | [`docs/lidar-live-viewer.html`](docs/lidar-live-viewer.html) |
 | Cartographer 建图 + Nav2 自主导航 | ✅ | §2，参数 `board/home/sunrise/nav_config/` |
+| GUI 一键建图/存图工作流 | ✅ 实测 | §2，[`docs/rdk-x5-mapping-workflow.html`](docs/rdk-x5-mapping-workflow.html) |
+| Episode 数据录制（rosbag2）+ 数据 Tab | ✅ 实测 | §4，[`docs/rdk-x5-dataset-recorder-design.html`](docs/rdk-x5-dataset-recorder-design.html) |
 | cmd_vel 安全仲裁 + 驱动崩溃自愈 | ✅ | §2.2 事故复盘 |
 | 激光急刹 safety_stop（rclcpp） | ✅ 实测 | §2.3，[`board/home/sunrise/ros2_ws/src/safety_stop/`](board/home/sunrise/ros2_ws/src/safety_stop/) |
 | **Follow-me 相机+雷达融合跟随** | ✅ 实测可用 | §3，[`docs/rdk-x5-follow-me-fusion.html`](docs/rdk-x5-follow-me-fusion.html) |
@@ -31,11 +33,13 @@
 
 ## 1. 桌面控制台 GUI（Tauri 自研）
 
-`gui/` 下的跨平台桌面应用（Tauri + rosbridge websocket），把散落的浏览器页面收敛成一个控制台：
-地图/雷达/相机三层叠加、拖线下发导航目标、手柄遥控自检、跟随开关、重启/关机电源键、
-状态栏（电量/温度/CPU/内存/硬盘 + 各话题活性灯）。
+`gui/` 下的跨平台桌面应用（Tauri + rosbridge websocket），把散落的浏览器页面收敛成一个控制台，
+四个 Tab：**仪表盘**（地图/雷达/相机三层叠加、点击图钉导航、建图/存图、急刹与跟随开关、全停）、
+**📼 数据**（episode 列表/录制/预览回看/RViz 回放/拉取删除）、**系统**（硬件拓扑 + 软件栈框图）、
+**日志**（板上 journald 流式查看）。状态栏：电量/温度/CPU/内存/硬盘 + 各话题活性灯。
 
 **仪表盘**：地图（AMCL 定位，绿色箭头为车）+ 雷达点云（粉色）+ 相机画中画（含手势检测框叠加）。
+**点击地图任意点 = 📍 图钉落地 + 下发导航目标**（再点=换目标，🛑 全停清除）。
 顶栏 `🧍 跟随` 滑块开关直接 enable/disable 板上 `follow-me.service`，重启小车依然生效：
 
 ![GUI 仪表盘](docs/images/gui-dashboard.jpg)
@@ -52,12 +56,17 @@
 
 ## 2. 建图与 Nav2 自主导航（2026-07-11 实机验证 ✅）
 
-- **建图**：`yahboomcar_nav` 的 cartographer 链（`map_cartographer_launch.py`），存图
-  `ros2 run nav2_map_server map_saver_cli -f /home/sunrise/maps/room`。当前用图 `room.yaml`。
+- **建图（GUI 一键工作流，2026-07-14 ✅）**：仪表盘 `🗺 建图` 按钮启停
+  `mapping.service`（仅 cartographer 本体，`Conflicts=nav2.service` 与导航互斥交接）；
+  手柄慢速走一圈，画布实时显示地图生长，**暗橙=存图会被三值化丢掉的弱墙**（置信度 25–65），
+  开近补扫变亮橙再存；`💾 存图` 跑 `map_save.sh`：备份 `room.bak.*` → 覆盖
+  `room.{yaml,pgm}` → 自动切回导航。详见
+  [`docs/rdk-x5-mapping-workflow.html`](docs/rdk-x5-mapping-workflow.html)。
 - **导航**：`navigation_dwb_launch.py`（Nav2 + AMCL + DWB），调优参数
   `/home/sunrise/maps/nav_params_tuned.yaml`：`robot_radius 0.1→0.13`、膨胀半径
-  `0.12/0.2→0.35`（否则贴着桌腿擦过去必撞）、限速 `0.26→0.18`。
-- **交互**：GUI 或浏览器 viewer 里**拖一条线**即下发目标（起点=位置，方向=朝向），红色"终止"取消。
+  `0.12/0.2→0.35`（否则贴着桌腿擦过去必撞）、限速 0.18 调通后提至 `0.6`。
+- **交互**：GUI 里**点击地图任意点**即下发目标（📍 图钉常驻显示最新目标，
+  终点朝向自动取车→目标方向），`🛑 全停` 取消。
 
 ### 2.1 开机自启服务（板上 6 个）
 
@@ -68,9 +77,11 @@ unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，
 | `ms200-lidar` | 雷达驱动，发布 `/scan` |
 | `rosbridge` | DDS → WebSocket 桥（`ws://<板子IP>:9090`） |
 | `mipi-cam` | 相机 `/image_jpeg`（等 ISP 就绪再起，防开机竞态） |
-| `nav-bringup` | 底盘驱动 + 里程计/EKF + 手柄 + cmd_vel 仲裁 mux |
+| `nav-bringup` | 底盘驱动 + 里程计/EKF + 手柄 + cmd_vel 仲裁 mux + episode 录制器（§4） |
 | `nav2` | AMCL + 规划器 + 控制器（自动喂初始位姿；无目标不动车） |
 | `follow-me` | BPU 感知 ×3 + 融合跟随节点（GUI 开关控制，见 §3） |
+
+另有按需单元 `mapping`（不自启）：cartographer 建图，`Conflicts=nav2` 互斥，GUI `🗺 建图` 启停。
 
 ```bash
 # 换地图/重喂定位：sudo bash /home/sunrise/nav_config/nav_start.sh [map.yaml]
@@ -147,7 +158,24 @@ unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，
 
 ---
 
-## 4. 硬件速览 / Hardware at a glance
+## 4. Episode 数据录制与回放（rosbag2，实测 ✅）
+
+为后续模仿学习/数据集积累做的一键示教录制：手柄 **START 键**或 GUI/数据 Tab 的 `⏺ 录制`
+按钮开停，板端常驻节点 [`episode_recorder.py`](board/home/sunrise/nav_config/episode_recorder.py)
+（随 `nav-bringup` 启动）把 11 个话题（scan/odom/tf/各级 cmd_vel/joy/相机 JPEG）录成
+`~/episodes/ep_<时间戳>/`，蜂鸣反馈、磁盘余量护栏、时长上限（默认 3 min，GUI 可调）。
+复用急刹开关同款**单一属主模式**：节点持有状态，手柄/GUI 只发 `/record_toggle` 翻转 +
+镜像 latched `/recording`；🛑 全停走幂等 `/record_stop`（不会反向开录）。
+
+**GUI 📼 数据 Tab**：episode 列表（倒序/大小/时长/板上余量）、行内展开快速回看
+（帧滑条 + odom 轨迹 + cmd_vel 时间轴，走 ≤150 帧抽样 preview，5 MB 级秒拉）、
+`🔭 回放` 一键拉包并本机 RViz2 复现（`scripts/replay.sh`，隔离 DOMAIN + sim time）、
+拉取/删除。深度分析用 [`notebooks/episode_lab.ipynb`](notebooks/episode_lab.ipynb)。
+设计与评审细节见 [`docs/rdk-x5-dataset-recorder-design.html`](docs/rdk-x5-dataset-recorder-design.html)。
+
+---
+
+## 5. 硬件速览 / Hardware at a glance
 
 | 部件 | 规格 |
 | --- | --- |
@@ -161,7 +189,7 @@ unit 文件在仓库 [`board/etc/systemd/system/`](board/etc/systemd/system/)，
 
 ---
 
-## 5. 目录结构 / Repo layout
+## 6. 目录结构 / Repo layout
 
 ```
 RDK-experience/
@@ -169,19 +197,24 @@ RDK-experience/
 ├── CLAUDE.md / AGENTS.md           # 给 AI 协作工具的项目说明
 ├── .memory/                        # 跨工具持久记忆（协议 SKILL.md + 索引 + 事实）
 ├── board/                          # 板端文件 1:1 镜像（路径与板子一致，重刷机后一键恢复）
-│   ├── etc/systemd/system/         #   自启服务 unit ×6（§2.1）
-│   ├── home/sunrise/nav_config/    #   导航自定义件（bringup/mux/nav_start）
+│   ├── etc/systemd/system/         #   服务 unit（自启 ×6 + 按需 mapping，§2.1）
+│   ├── home/sunrise/nav_config/    #   导航/录制自定义件（bringup/mux/joy_teleop/episode_*/map_save）
 │   ├── home/sunrise/follow/        #   Follow-me 融合跟随（follow_me.py + follow_start.sh）
+│   ├── home/sunrise/ros2_ws/       #   rclcpp 自研包（safety_stop 激光急刹）
 │   └── home/sunrise/scripts/       #   WiFi 切换 / 相机模式切换等板端脚本
 ├── gui/                            # 桌面控制台（Tauri + rosbridge，§1）
-│   ├── src-tauri/                  #   Rust 后端（ssh 命令、服务开关、单实例）
-│   └── ui/                         #   前端（地图/雷达/相机叠加、系统拓扑图）
+│   ├── src-tauri/                  #   Rust 后端（ssh 命令、服务开关、episode 管理、单实例）
+│   └── ui/                         #   前端（仪表盘/数据/系统/日志四 Tab）
+├── notebooks/                      # 工作站分析 notebook（episode_lab / strafe_test）
 ├── scripts/                        # 主机侧工具
-│   └── deploy_board.sh             #   重刷机一键恢复：rsync board/ → 板子 / + enable 服务
+│   ├── deploy_board.sh             #   重刷机一键恢复：rsync board/ → 板子 / + enable 服务
+│   └── replay.sh / rviz.sh         #   episode 本机 RViz 回放（隔离 DOMAIN + sim time）
 └── docs/
     ├── setup.md                    # 接入/冷启动/WiFi/VNC/相机预览（从本文件拆出）
     ├── images/                     # 实拍与截图
     ├── rdk-x5-follow-me-fusion.html           # Follow-me 融合算法详解
+    ├── rdk-x5-mapping-workflow.html           # GUI 一键建图/存图工作流
+    ├── rdk-x5-dataset-recorder-design.html    # Episode 录制系统设计
     ├── rdk-x5-gui-architecture.html           # GUI 架构
     ├── rdk-x5-system-report.html              # 系统体检报告
     ├── lidar-live-viewer.html                 # 浏览器实时仪表盘（GUI 的前身，仍可独立用）
