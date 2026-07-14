@@ -51,6 +51,128 @@ fn v(args: &[&str]) -> Vec<String> {
     args.iter().map(|s| s.to_string()).collect()
 }
 
+// ---- Episode management ---------------------------------------------------
+
+// Whitelist firewall for every command that takes an episode name.
+// Name must be EXACTLY "ep_YYYYMMDD_HHMMSS" = "ep_" + 8 digits + "_" + 6 digits
+// (18 bytes). This is the only shape allowed to reach a remote path or an
+// export script argument, which structurally eliminates shell injection (no
+// slashes, spaces, quotes, dashes, or `..` can pass). We have no `regex` crate,
+// so this is the hand-written equivalent of ^ep_[0-9]{8}_[0-9]{6}$.
+// Note: in-progress ".partial" recording dirs never match (the trailing
+// ".partial" breaks the length/charset), so the UI can never export, pull, or
+// delete a still-recording or truncated episode — that exclusion is deliberate.
+fn valid_ep_name(name: &str) -> Result<(), String> {
+    let b = name.as_bytes();
+    let ok = b.len() == 18
+        && &b[0..3] == b"ep_"
+        && b[3..11].iter().all(u8::is_ascii_digit)
+        && b[11] == b'_'
+        && b[12..18].iter().all(u8::is_ascii_digit);
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("invalid episode name (want ep_YYYYMMDD_HHMMSS): {name}"))
+    }
+}
+
+// Local repo-side episodes root. No prior code locates the repo, so we anchor on
+// the crate dir at compile time: gui/src-tauri -> up two -> repo root -> episodes.
+fn local_episodes_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|p| p.join("episodes"))
+        .unwrap_or_else(|| std::path::PathBuf::from("episodes"))
+}
+
+// One ssh hop runs this stdlib-only python on the board (no third-party libs):
+// walk /home/sunrise/episodes, parse each flat meta.yaml (our own "key: value"
+// format, split on the first colon), du the dir, check preview/ existence, and
+// read statvfs for free space. Emits one JSON line the Rust side then augments.
+const EP_LIST_PY: &str = r#"python3 - <<'PYEOF'
+import os, json, subprocess
+root = "/home/sunrise/episodes"
+eps = []
+if os.path.isdir(root):
+    for name in sorted(os.listdir(root)):
+        d = os.path.join(root, name)
+        if not os.path.isdir(d):
+            continue
+        duration_s = None
+        stopped_by = None
+        meta = os.path.join(d, "meta.yaml")
+        if os.path.isfile(meta):
+            with open(meta) as f:
+                for line in f:
+                    if ":" not in line:
+                        continue
+                    k, _, val = line.partition(":")
+                    k = k.strip(); val = val.strip()
+                    if k == "duration_s":
+                        try: duration_s = float(val)
+                        except ValueError: pass
+                    elif k == "stopped_by":
+                        stopped_by = val or None
+        size_mb = 0.0
+        try:
+            kb = int(subprocess.check_output(["du", "-sk", d]).split()[0])
+            size_mb = round(kb / 1024.0, 1)
+        except Exception:
+            pass
+        eps.append({
+            "name": name,
+            "partial": name.endswith(".partial"),
+            "duration_s": duration_s,
+            "stopped_by": stopped_by,
+            "size_mb": size_mb,
+            "preview_remote": os.path.isdir(os.path.join(d, "preview")),
+        })
+try:
+    st = os.statvfs(root if os.path.isdir(root) else "/home/sunrise")
+    disk_free_gb = round(st.f_bavail * st.f_frsize / (1024.0 ** 3), 1)
+except Exception:
+    disk_free_gb = 0.0
+print(json.dumps({"disk_free_gb": disk_free_gb, "episodes": eps}))
+PYEOF
+"#;
+
+#[derive(serde::Deserialize)]
+struct BoardEp {
+    name: String,
+    partial: bool,
+    duration_s: Option<f64>,
+    stopped_by: Option<String>,
+    size_mb: f64,
+    preview_remote: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct BoardList {
+    disk_free_gb: f64,
+    episodes: Vec<BoardEp>,
+}
+
+#[derive(serde::Serialize)]
+struct Ep {
+    name: String,
+    partial: bool,
+    duration_s: Option<f64>,
+    stopped_by: Option<String>,
+    size_mb: f64,
+    pulled: bool,
+    // Absolute path of the local preview dir (frontend feeds it to
+    // convertFileSrc), null when the preview has not been pulled yet.
+    preview_local: Option<String>,
+    preview_remote: bool,
+}
+
+#[derive(serde::Serialize)]
+struct EpList {
+    disk_free_gb: f64,
+    episodes: Vec<Ep>,
+}
+
 /// Fetch journal for one whitelisted source. source = service name | "dmesg".
 #[tauri::command]
 async fn journal(source: String, lines: u32) -> Result<String, String> {
@@ -519,6 +641,143 @@ async fn power(action: String) -> Result<String, String> {
     }
 }
 
+/// List episodes on the board, merged with local pull state. Returns the JSON
+/// contract {disk_free_gb, episodes:[{name, partial, duration_s, stopped_by,
+/// size_mb, pulled, preview_local, preview_remote}]}. The board half comes from
+/// EP_LIST_PY; pulled/preview_local are decided here from the local repo tree.
+/// Read-only — no name reaches the shell (EP_LIST_PY takes no argument).
+#[tauri::command]
+async fn ep_list() -> Result<String, String> {
+    let raw = ssh_bg(vec![EP_LIST_PY.to_string()]).await?;
+    let board: BoardList = serde_json::from_str(raw.trim())
+        .map_err(|e| format!("parse board json failed: {e}: {raw}"))?;
+    let base = local_episodes_dir();
+    let episodes: Vec<Ep> = board
+        .episodes
+        .into_iter()
+        .map(|e| {
+            let dir = base.join(&e.name);
+            let preview = dir.join("preview");
+            Ep {
+                pulled: dir.join("bag").is_dir(),
+                preview_local: preview
+                    .is_dir()
+                    .then(|| preview.to_string_lossy().into_owned()),
+                name: e.name,
+                partial: e.partial,
+                duration_s: e.duration_s,
+                stopped_by: e.stopped_by,
+                size_mb: e.size_mb,
+                preview_remote: e.preview_remote,
+            }
+        })
+        .collect();
+    serde_json::to_string(&EpList { disk_free_gb: board.disk_free_gb, episodes })
+        .map_err(|e| format!("serialize failed: {e}"))
+}
+
+/// Ask the board to bag-export one episode (idempotent — the script skips if
+/// already done). `name` is whitelist-validated before it is interpolated, so
+/// only ep_YYYYMMDD_HHMMSS can ever reach the shell line. Runs on the blocking
+/// pool via ssh_bg, so a slow export never freezes the UI thread.
+#[tauri::command]
+async fn ep_export(name: String, preview: bool) -> Result<String, String> {
+    valid_ep_name(&name)?;
+    let mut cmd = format!(
+        "source /opt/tros/humble/setup.bash && \
+         python3 /home/sunrise/nav_config/episode_export.py {name}"
+    );
+    if preview {
+        cmd.push_str(" --preview");
+    }
+    ssh_bg(vec![cmd]).await
+}
+
+/// Pull one episode from the board into the local repo episodes/<name>/ via
+/// rsync. preview=true fetches only meta.yaml + preview/ (include-rules,
+/// everything else excluded); false mirrors the whole dir. `name` is
+/// whitelist-validated first, so the remote path is a fixed, injection-proof
+/// ep_YYYYMMDD_HHMMSS. Blocking rsync runs on spawn_blocking off the UI thread.
+#[tauri::command]
+async fn ep_pull(name: String, preview: bool) -> Result<String, String> {
+    valid_ep_name(&name)?;
+    let dest = local_episodes_dir().join(&name);
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir_all(&dest)
+            .map_err(|e| format!("mkdir {} failed: {e}", dest.display()))?;
+        // Reuse the same ssh hardening as ssh() for the rsync transport.
+        let mut args: Vec<String> = vec![
+            "-a".into(),
+            "--info=stats2".into(),
+            "-e".into(),
+            "ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new"
+                .into(),
+        ];
+        if preview {
+            // Only meta.yaml + the whole preview/ subtree; drop the bag/raw data.
+            args.push("--include=meta.yaml".into());
+            args.push("--include=preview/".into());
+            args.push("--include=preview/**".into());
+            args.push("--exclude=*".into());
+        }
+        // name is validated ep_YYYYMMDD_HHMMSS: no metachars can reach the path.
+        args.push(format!("{BOARD}:/home/sunrise/episodes/{name}/"));
+        args.push(format!("{}/", dest.display()));
+        let out = Command::new("rsync")
+            .args(&args)
+            .output()
+            .map_err(|e| format!("rsync spawn failed: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("rsync exit {}: {}", out.status, err.trim()));
+        }
+        // Return the last few lines (rsync's transfer/stats summary).
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        let start = lines.len().saturating_sub(8);
+        Ok(lines[start..].join("\n"))
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))?
+}
+
+/// Delete one episode directory on the board. SAFETY: `name` must pass the
+/// ep_YYYYMMDD_HHMMSS whitelist — anything else returns Err before any shell
+/// runs, so injection is eliminated at the root. The path is fixed and `rm -rf
+/// --` stops a name from being read as an option. ".partial" dirs fail the
+/// whitelist by design (no deleting in-progress/truncated recordings). The
+/// two-step confirm is the frontend's job.
+#[tauri::command]
+async fn ep_delete(name: String) -> Result<String, String> {
+    valid_ep_name(&name)?;
+    ssh_bg(vec![format!(
+        "rm -rf -- /home/sunrise/episodes/{name} && echo deleted {name}"
+    )])
+    .await
+}
+
+/// Open a pulled episode in a local RViz replay (scripts/replay.sh: bag play
+/// on ROS_DOMAIN_ID=42 + rviz2, both die when the RViz window closes).
+/// Detached — the GUI does not babysit the viewer.
+#[tauri::command]
+async fn ep_replay(name: String) -> Result<String, String> {
+    valid_ep_name(&name)?;
+    let ep = local_episodes_dir().join(&name);
+    if !ep.join("bag").is_dir() {
+        return Err("本地无完整 bag,先拉取完整".into());
+    }
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .ok_or("repo root not found")?
+        .join("scripts/replay.sh");
+    std::process::Command::new(script)
+        .arg(&ep)
+        .spawn()
+        .map_err(|e| format!("spawn replay failed: {e}"))?;
+    Ok(format!("replay started for {name}"))
+}
+
 fn main() {
     tauri::Builder::default()
         // single instance: a second launch just focuses the existing window
@@ -542,7 +801,12 @@ fn main() {
             mod_info,
             stack_info,
             follow_get,
-            follow_set
+            follow_set,
+            ep_list,
+            ep_export,
+            ep_pull,
+            ep_delete,
+            ep_replay
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -18,6 +18,6 @@ metadata:
   修好前横移相关功能都不可信。
 - 亚博 APP"麦克纳姆轮"页=四轮独立 PWM 点动台(cmd 20/21 直呼 set_motor),
   无任何持久化,可当手动扭矩测试台用;APP 会抢底盘串口,用前停 nav-bringup。
-- 诊断工具:项目根 strafe_test.ipynb 一键触发横移/前进/旋转并回读 odom 增量。
+- 诊断工具:notebooks/strafe_test.ipynb 一键触发横移/前进/旋转并回读 odom 增量。
 
 相关:[[rdk-x5-gamepad-teleop]] [[rdk-x5-follow-me]]

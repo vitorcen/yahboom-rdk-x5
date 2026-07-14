@@ -84,9 +84,16 @@ def generate_launch_description():
         output='screen', respawn=True, respawn_delay=1.0,
     )
 
+    # Episode recorder: gamepad START / GUI toggle -> rosbag2 capture into
+    # ~/episodes (see episode_recorder.py). Boots idle.
+    recorder_node = ExecuteProcess(
+        cmd=['python3', os.path.join(os.path.dirname(__file__), 'episode_recorder.py')],
+        output='screen', respawn=True, respawn_delay=1.0,
+    )
+
     return LaunchDescription([
         pub_odom_tf_arg,
         driver_node, base_node, imu_filter_node, ekf_node,
         joy_node, joy_teleop_node, description_node,
-        mux_node, safety_node,
+        mux_node, safety_node, recorder_node,
     ])

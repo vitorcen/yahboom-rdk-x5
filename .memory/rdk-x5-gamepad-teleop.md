@@ -15,12 +15,15 @@ metadata:
 - **实测键位**(罗技手柄经 0079:181c 无线接收器,不完全按罗技官方表走,全部板上抓包,勿信惯例):
   axes[1]/[0]=左杆前后/转向,axes[2]=右杆横移,axes[6]/[7]=方向键帽轴(左/上=+1,
   发半杆量≈0.5 天然慢速),buttons[3]=X 左横移,buttons[1]=B 右横移,
-  buttons[0]=A 切急刹开关,buttons[4]=Y 全停,buttons[6]=**L1**(厂商代码误标 SELECT);
+  buttons[0]=A 切急刹开关,buttons[4]=Y 全停,buttons[6]=**L1**(厂商代码误标 SELECT),
+  buttons[11]=START 切换 episode 录制;
   **axes[4]/[5] 是静息恒 +1.0 的扳机轴,映射它=永久蠕动指令**(踩过);
   **MODE 键是手柄本地模拟/数字硬件开关**:不上报 /joy 且会重映射摇杆,不可绑定、开车勿按。
 - **校准教训**:第一轮就要 axes+buttons 全量抓,只盯轴会把帽轴误认成按键轴
   (走了三轮弯路);校准用"长按 5 秒一次一键",短按混按解不开。
 - GUI"🛑 全停"按钮(原名"终止")与手柄 Y 键同契约:取消 Nav2 目标 + /cmd_vel_joy
-  (最高优先级)零速连发 ~2s + disable follow-me + 长滴一声,见 [[rdk-x5-safety-stop]]。
+  (最高优先级)零速连发 ~2s + 停录 + 长滴一声;**不碰 follow-me 等功能开关**
+  (2026-07-13 修订,旧版 disable follow-me 是"跟随莫名关闭"的根因),
+  见 [[rdk-x5-safety-stop]]。
 
 相关:[[rdk-x5-strafe-weak-rear]] [[rdk-x5-follow-me]] [[rdk-x5-nav2-plan]] [[rdk-x5-safety-stop]]

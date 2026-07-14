@@ -1,7 +1,6 @@
 // Dashboard: TF / map / scan rendering, goal drag, stop button, mode toggle.
 import { $, S } from './state.js';
 import { onTopic, send, connected, cancelAllGoals, pubTwist } from './ros.js';
-import { followOff } from './health.js';
 
 const cv = $('cv'), cx = cv.getContext('2d'), stats = $('stats');
 let toastTimer = null;
@@ -222,13 +221,14 @@ $('stop').onclick = () => {
   // Brake on /cmd_vel_joy (HIGHEST mux priority): zeros here preempt
   // follow-me and Nav2 instantly; /cmd_vel zeros would lose to follow.
   for (let i = 0; i < 8; i++) setTimeout(() => pubTwist(0,0,0,'/cmd_vel_joy'), i*80);
-  const followStopped = followOff();   // kill the chase, not just this twitch
+  // Stop MOTION only — feature switches (follow-me) are deliberately left
+  // alone: the zero burst outranks follow, and the 🧍 switch owns the feature.
+  // idempotent stop (not toggle — toggle would start recording if idle)
+  send({ op:'publish', topic:'/record_stop', msg:{} });
   // one long beep = stop-all, same audible contract as the gamepad Y key
   send({ op:'publish', topic:'/Buzzer', msg:{ data:true } });
   setTimeout(() => send({ op:'publish', topic:'/Buzzer', msg:{ data:false } }), 600);
-  toast(followStopped
-    ? '🛑 已全停：取消导航 + 关闭跟随 + 最高优先级刹停'
-    : '🛑 已全停：取消导航 + 刹停（浏览器模式无法关跟随，请注意）');
+  toast('🛑 已全停：取消导航 + 最高优先级刹停（跟随开关不受影响）');
 };
 
 // Canvas backing store follows its on-screen size; content stays proportional

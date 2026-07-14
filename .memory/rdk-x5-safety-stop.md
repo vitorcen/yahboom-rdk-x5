@@ -18,7 +18,9 @@ metadata:
   latched /safety_enabled(Bool) 广播——GUI 拨钮和手柄 A 键都是"发翻转+镜像显示",单一机制。
 - **蜂鸣约定**(走驱动 /Buzzer Bool,True=响 False=停,时长由发布方控):
   急刹开=两短滴,急刹关=一长滴,全停(GUI 🛑全停按钮/手柄 Y 键)=一长滴。
-- 全停 stop-all 契约(GUI 与手柄 Y 同款):取消 Nav2 目标 + disable follow-me
-  + /cmd_vel_joy 零速连发 ~2s 压住总线 + 长滴。
+- 全停 stop-all 契约(GUI 与手柄 Y 同款,2026-07-13 修订):只停"当前动作"——
+  取消 Nav2 目标 + /cmd_vel_joy 零速连发 ~2s 压住总线 + 停录 + 长滴;
+  **不碰功能开关**(曾 disable follow-me,用户感知"跟随莫名自动关闭",根因即此;
+  跟随只归 GUI 🧍开关管)。
 
 相关:[[rdk-x5-gamepad-teleop]] [[rdk-x5-nav2-plan]] [[rdk-x5-follow-me]]

@@ -102,6 +102,17 @@ if (!invoke) $('ctl').style.display = 'none';   // browser mode: no ssh backend
 onTopic('/safety_enabled', m => $('mSafety').classList.toggle('on', m.data));
 $('mSafety').onclick = () => send({ op:'publish', topic:'/safety_toggle', msg:{} });
 
+// ---- Recording buttons (dashboard + data tab): episode_recorder owns the
+// state and latches /recording; every .recbtn just publishes a toggle and
+// mirrors the broadcast, so all copies stay in sync for free ----
+const recBtns = document.querySelectorAll('.recbtn');
+onTopic('/recording', m => recBtns.forEach(b => {
+  b.classList.toggle('on', m.data);
+  b.textContent = m.data ? '⏺ 录制中' : '⏺ 录制';
+}));
+recBtns.forEach(b =>
+  b.onclick = () => send({ op:'publish', topic:'/record_toggle', msg:{} }));
+
 // ---- Follow-me switch: systemd enable/disable on the board, so the choice
 // is remembered and survives both GUI restarts and board reboots ----
 async function followRefresh() {
@@ -116,14 +127,6 @@ async function setFollow(on) {
   try { await invoke('follow_set', { on }); }
   catch { $('mFollow').classList.toggle('on', !on); }
   finally { $('mFollow').disabled = false; setTimeout(followRefresh, 4000); }
-}
-
-// Stop-button helper: force follow-me off. Returns false in browser mode
-// (no ssh backend), where the caller should warn that follow stays enabled.
-export function followOff() {
-  if (!invoke) return false;
-  if ($('mFollow').classList.contains('on')) setFollow(false);
-  return true;
 }
 
 if (invoke) {

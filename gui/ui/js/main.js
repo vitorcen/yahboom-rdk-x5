@@ -9,6 +9,7 @@ import './health.js';
 import { keyStop } from './teleop.js';
 import { onLogsShown } from './logs.js';
 import { onSysShown } from './system.js';
+import { onDataShown } from './data.js';
 
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   S.page = b.dataset.page;
@@ -18,6 +19,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   if (S.page !== 'dash') keyStop();
   if (S.page === 'logs') onLogsShown();
   if (S.page === 'sys') onSysShown();
+  if (S.page === 'data') onDataShown();
 });
 
 // ---- board power buttons: first click arms (red, 3 s), second click fires ----
@@ -80,6 +82,8 @@ if (invoke) {
   pollAlive(); setInterval(pollAlive, 3000);
 } else {
   $('power').style.display = 'none';   // browser mode: no ssh backend
+  const dataTab = document.querySelector('.tab[data-page="data"]');
+  if (dataTab) dataTab.style.display = 'none';   // ep_* commands need Tauri
 }
 
 $('btn').onclick = connect;

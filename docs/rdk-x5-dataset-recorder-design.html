@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dataset Recorder 设计 — 手柄一键录制 episode — RDK X5</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:980px; padding:24px 20px 80px; background:#0b0e14; color:#cdd6f4;
+         font:15px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:24px; margin:8px 0 2px; }
+  h2 { font-size:18px; margin:40px 0 10px; padding-bottom:6px; border-bottom:1px solid #262b3d; }
+  h2 .en, h1 .en { color:#5d6485; font-size:.72em; font-weight:400; margin-left:10px; }
+  h3 { font-size:15px; margin:22px 0 6px; color:#a6b6e8; }
+  p, li { color:#b9c2e0; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 6px;
+         font:12.5px ui-monospace,Consolas,monospace; color:#8ec8ea; }
+  pre { background:#0f131f; border:1px solid #262b3d; border-radius:8px; padding:12px 16px;
+        overflow-x:auto; font:12.5px/1.7 ui-monospace,Consolas,monospace; color:#cdd6f4; }
+  pre code { background:none; border:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid #262b3d; padding:7px 12px; text-align:left; }
+  th { background:#161a26; color:#a6b6e8; font-weight:600; }
+  td { color:#b9c2e0; }
+  .tldr { background:#12202c; border:1px solid #1f3a50; border-left:4px solid #2b7cb8;
+          border-radius:8px; padding:14px 18px; margin:18px 0; }
+  .warn { background:#2c2312; border:1px solid #50401f; border-left:4px solid #b8862b;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .ok   { color:#7ee2a8; } .bad { color:#f38ba8; } .dim { color:#5d6485; }
+  figure { margin:18px 0; } figcaption { font-size:12px; color:#5d6485; margin-top:6px; }
+  svg { max-width:100%; height:auto; display:block; }
+  ol li, ul li { margin:4px 0; }
+  .meta { color:#5d6485; font-size:12.5px; margin-bottom:26px; }
+</style>
+</head>
+<body>
+
+<h1>Dataset Recorder 设计<span class="en">Gamepad one-key episode recording &amp; playback</span></h1>
+<div class="meta">RDK X5 Robot · rosbag2 · 64G 卡已扩容(余 ~60%) · v2 2026-07-13(gpt-5.6 评审后修订) · <span class="ok">已实施,板上实录验证</span></div>
+
+<div class="tldr">
+<b>TL;DR</b> — 板端新增常驻节点 <code>episode_recorder.py</code>,复用 safety_stop 的
+<b>“节点持有状态 + 外部只发翻转 + latched 广播镜像”</b>单一机制:手柄 START 键与 GUI ⏺ 按钮
+都只发 <code>/record_toggle</code>(Empty),全停链路另走幂等 <code>/record_stop</code>
+(评审修订:全停发 toggle 会在未录制时反向开录);节点起停 <code>ros2 bag record</code> 子进程、
+写 <code>meta.yaml</code>、蜂鸣反馈,latched <code>/recording</code>(Bool) 供两端镜像显示。
+分析/回放放在<b>工作站新 notebook</b> <code>episode_lab.ipynb</code>(列出/拉取/画轨迹/回看图像);
+<code>strafe_test.ipynb</code> 原样保留,它是横移硬件故障的验收工具,不混用。
+<span class="en">One resident recorder node on the board, toggled by gamepad START or GUI; analysis lives
+in a new workstation notebook; the strafe diagnosis notebook stays untouched.</span>
+</div>
+
+<h2>一、为什么是这个形态<span class="en">Why this shape</span></h2>
+<ul>
+<li><b>录制必须离得开电脑</b> — 人在场地里拿手柄示教,Jupyter 开没开不该有关系。
+    录制器是板端 systemd 常驻节点,断 Wi-Fi 照录。</li>
+<li><b>单一机制,零特殊情况</b> — 急刹开关(<code>/safety_toggle</code> + latched
+    <code>/safety_enabled</code>)已经验证过这套模式:状态只有一份、住在节点里,
+    手柄和 GUI 都是“发翻转 + 镜像显示”,不存在两端状态打架。录制照抄。</li>
+<li><b>notebook 只做事后分析</b> — 交互画图、逐帧回看、标注成败,这才是 notebook 的正确用途。
+    新开 <code>episode_lab.ipynb</code>,不改造 <code>strafe_test.ipynb</code>
+    (后者是未解决的后轮扭矩故障的验收工具,换轮后还要用)。</li>
+<li><b>这是后续一切学习实验的地基</b> — LiDAR-to-Action 行为克隆、4090 远端推理对比、
+    Nav2 基线统计,全都吃同一种 episode 数据。先固定数据契约,模型随便换。</li>
+</ul>
+
+<h2>二、架构<span class="en">Architecture</span></h2>
+<figure>
+<svg viewBox="0 0 940 400" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5d8fce"/>
+    </marker>
+  </defs>
+  <style>
+    .box  { fill:#161a26; stroke:#3b4261; rx:8; }
+    .core { fill:#12202c; stroke:#2b7cb8; rx:8; }
+    .side { fill:#1a1626; stroke:#7b5cb8; rx:8; }
+    .t  { fill:#cdd6f4; font-size:13px; font-weight:600; }
+    .s  { fill:#8a93b5; font-size:11px; }
+    .lb { fill:#8ec8ea; font-size:11px; font-family:ui-monospace,monospace; }
+    .fl { stroke:#5d8fce; stroke-width:1.6; fill:none; marker-end:url(#arr); }
+    .grp { fill:none; stroke:#262b3d; stroke-dasharray:5 4; rx:12; }
+    .gt { fill:#5d6485; font-size:11px; letter-spacing:1px; }
+  </style>
+
+  <!-- board group -->
+  <rect class="grp" x="12" y="34" width="640" height="350"/>
+  <text class="gt" x="24" y="24">RDK X5 板端(常驻,断网可用) / ON-BOARD</text>
+
+  <!-- gamepad -->
+  <rect class="box" x="30" y="60" width="150" height="52"/>
+  <text class="t" x="105" y="82" text-anchor="middle">手柄 START 键</text>
+  <text class="s" x="105" y="99" text-anchor="middle">joy_teleop 上升沿</text>
+
+  <!-- gui -->
+  <rect class="box" x="30" y="140" width="150" height="52"/>
+  <text class="t" x="105" y="162" text-anchor="middle">GUI ⏺ 录制按钮</text>
+  <text class="s" x="105" y="179" text-anchor="middle">rosbridge 发布</text>
+
+  <!-- recorder node -->
+  <rect class="core" x="280" y="88" width="200" height="86"/>
+  <text class="t" x="380" y="112" text-anchor="middle">episode_recorder.py</text>
+  <text class="s" x="380" y="130" text-anchor="middle">状态唯一持有者</text>
+  <text class="s" x="380" y="147" text-anchor="middle">起停子进程 · meta.yaml</text>
+  <text class="s" x="380" y="164" text-anchor="middle">磁盘余量守门 · 蜂鸣</text>
+
+  <!-- toggle arrows -->
+  <path class="fl" d="M180 86 L272 108"/>
+  <path class="fl" d="M180 166 L272 148"/>
+  <text class="lb" x="196" y="80">/record_toggle (Empty)</text>
+
+  <!-- latched back -->
+  <path class="fl" d="M280 174 C 220 210 160 205 108 196"/>
+  <text class="lb" x="180" y="222">/recording (Bool, latched) → 两端镜像</text>
+
+  <!-- bag subprocess -->
+  <rect class="box" x="280" y="230" width="200" height="60"/>
+  <text class="t" x="380" y="255" text-anchor="middle">ros2 bag record</text>
+  <text class="s" x="380" y="273" text-anchor="middle">子进程 · SIGINT 优雅收尾</text>
+  <path class="fl" d="M380 174 L380 226"/>
+  <text class="lb" x="392" y="205">spawn / SIGINT</text>
+
+  <!-- topics -->
+  <rect class="box" x="520" y="88" width="112" height="130"/>
+  <text class="t" x="576" y="110" text-anchor="middle">数据源</text>
+  <text class="s" x="576" y="130" text-anchor="middle">/scan /odom</text>
+  <text class="s" x="576" y="147" text-anchor="middle">/tf(+static)</text>
+  <text class="s" x="576" y="164" text-anchor="middle">/cmd_vel*</text>
+  <text class="s" x="576" y="181" text-anchor="middle">/joy</text>
+  <text class="s" x="576" y="198" text-anchor="middle">/image_jpeg</text>
+  <path class="fl" d="M520 200 C 500 230 490 245 484 252"/>
+
+  <!-- storage -->
+  <rect class="box" x="280" y="318" width="200" height="52"/>
+  <text class="t" x="380" y="340" text-anchor="middle">~/episodes/ep_*/</text>
+  <text class="s" x="380" y="357" text-anchor="middle">bag + meta.yaml(64G 卡)</text>
+  <path class="fl" d="M380 290 L380 314"/>
+
+  <!-- buzzer -->
+  <rect class="box" x="520" y="248" width="112" height="52"/>
+  <text class="t" x="576" y="270" text-anchor="middle">/Buzzer</text>
+  <text class="s" x="576" y="287" text-anchor="middle">起停/拒绝反馈</text>
+  <path class="fl" d="M480 140 C 560 150 600 190 580 244"/>
+
+  <!-- workstation group -->
+  <rect class="grp" x="676" y="34" width="252" height="350"/>
+  <text class="gt" x="688" y="24">工作站(事后) / WORKSTATION</text>
+
+  <rect class="side" x="700" y="88" width="204" height="110"/>
+  <text class="t" x="802" y="114" text-anchor="middle">episode_lab.ipynb</text>
+  <text class="s" x="802" y="134" text-anchor="middle">列出 / rsync 拉取</text>
+  <text class="s" x="802" y="151" text-anchor="middle">odom 轨迹 · cmd_vel 时间线</text>
+  <text class="s" x="802" y="168" text-anchor="middle">图像逐帧回看 · 标注成败</text>
+  <text class="s" x="802" y="185" text-anchor="middle">(可选)bag play 演示重放</text>
+
+  <path class="fl" d="M480 344 C 600 350 660 260 696 180"/>
+  <text class="lb" x="560" y="330">ssh / rsync 拉取</text>
+
+  <rect class="side" x="700" y="240" width="204" height="70"/>
+  <text class="t" x="802" y="266" text-anchor="middle">后续消费者</text>
+  <text class="s" x="802" y="284" text-anchor="middle">LiDAR policy 训练(4090)</text>
+  <text class="s" x="802" y="300" text-anchor="middle">Nav2/策略同场对比统计</text>
+  <path class="fl" d="M802 198 L802 236"/>
+</svg>
+<figcaption>单一状态源:录制状态只住在 episode_recorder 节点里;手柄与 GUI 都是“发翻转 + 镜像 latched 广播”。
+Single source of truth for recording state; gamepad and GUI are stateless toggles.</figcaption>
+</figure>
+
+<h2>三、板端录制节点<span class="en">episode_recorder.py</span></h2>
+
+<h3>3.1 接口契约 / Interface</h3>
+<table>
+<tr><th>话题</th><th>类型</th><th>方向</th><th>语义</th></tr>
+<tr><td><code>/record_toggle</code></td><td><code>std_msgs/Empty</code></td><td>入</td><td>翻转录制状态(手柄 START / GUI 按钮都发这个)</td></tr>
+<tr><td><code>/record_stop</code></td><td><code>std_msgs/Empty</code></td><td>入</td><td><b>幂等停止</b>,全停链路专用——评审抓出的 bug:全停若发 toggle,未录制时会反向开录</td></tr>
+<tr><td><code>/recording</code></td><td><code>std_msgs/Bool</code>,latched</td><td>出</td><td>当前是否在录,开机默认 <b>False</b>;GUI 亮红点、手柄无屏靠蜂鸣</td></tr>
+<tr><td><code>/Buzzer</code></td><td><code>std_msgs/Bool</code></td><td>出</td><td>声音反馈,见 3.4 约定表</td></tr>
+</table>
+
+<h3>3.2 录制内容 / What gets recorded</h3>
+<pre><code>ros2 bag record -o ~/episodes/ep_&lt;YYYYmmdd_HHMMSS&gt; \
+  /scan /odom /tf /tf_static \
+  /cmd_vel /cmd_vel_joy /cmd_vel_follow /cmd_vel_mux /cmd_vel_drv \
+  /joy /safety_enabled /image_jpeg \
+  --max-bag-size 1073741824 \       # 1 GiB 切包(512MB 高负载切包有丢消息风险,rosbag2#2108)
+  --qos-profile-overrides-path qos_overrides.yaml   # /tf_static /safety_enabled
+                                    # 显式 transient_local,否则 latched 历史录不进</code></pre>
+<ul>
+<li>录 <b>全部四级 cmd_vel</b>:这样每个 episode 自带“谁在开车、mux 裁了什么、
+    safety_stop 压了多少速”的完整证据链,事后不用猜。</li>
+<li><code>/image_jpeg</code> 是压缩流(GUI 同款),按 640×480@~15Hz 估约
+    <b>0.5–1 MB/s</b>,10 分钟 episode ≈ 0.3–0.6 GB,64G 卡余 60% 完全够;
+    参数 <code>record_image</code>(默认 true)可关。</li>
+<li>雷达+odom+tf+cmd_vel 合计只有几十 KB/s,忽略不计。</li>
+</ul>
+
+<h3>3.3 元数据 / meta.yaml</h3>
+<p>停止录制时由节点写入 episode 目录,张量不带上下文将来一定解释不了(路线图文档的原话):</p>
+<pre><code># ~/episodes/ep_20260713_153012/meta.yaml
+episode: ep_20260713_210340
+start: 2026-07-13T21:03:40+08:00
+duration_s: 42.3
+missing_topics: []                  # 开录时不在图上的话题,不静默缺列
+stopped_by: toggle | stop_all | disk_full | shutdown
+task: null                          # 事后标注写本地 annotations.yaml,
+success: null                       # meta.yaml 本身不回改(评审建议:
+notes: null                         # 原始记录不可变,标注另放一层)</code></pre>
+<p>录制中目录带 <code>.partial</code> 后缀,子进程退出、meta 落盘后才 rename 成正式名——
+残包一眼可辨,不承诺"半截 bag 一定可读"(评审建议)。</p>
+
+<h3>3.4 蜂鸣约定 / Beep conventions</h3>
+<p>已占用:急刹开=两短,急刹关/全停=一长。录制取<b>三短</b>系,不与既有冲突:</p>
+<table>
+<tr><th>事件</th><th>声音</th><th>备注</th></tr>
+<tr><td>开始录制</td><td>三短滴</td><td>与“急刹开=两短”区分</td></tr>
+<tr><td>停止录制(正常落盘)</td><td>一短一长</td><td>“收尾完成”</td></tr>
+<tr><td>拒绝开始(磁盘不足)</td><td>五连急促短滴</td><td>见 3.5 守门</td></tr>
+</table>
+
+<h3>3.5 磁盘守门与安全 / Guards</h3>
+<ul>
+<li><b>余量守门</b>:开始前查 <code>~/episodes</code> 所在分区,余量 &lt;
+    <code>min_free_gb</code>(默认 4 GB)则拒绝并急促蜂鸣。录制中每 30 s 复查,
+    跌破即自动停止落盘(宁可断录不可写满根分区)。</li>
+<li><b>优雅收尾</b>:停止 = 给子进程发 <code>SIGINT</code> 并等待退出,
+    rosbag2 自己写完 metadata;<code>SIGKILL</code> 只在超时(5 s)后兜底。</li>
+<li><b>与全停联动</b>:手柄 Y / GUI 🛑全停触发时,若在录,顺带停止录制并在
+    meta 里记 <code>stopped_by: stop_all</code> —— 全停通常意味着这条 episode
+    出事了,这本身就是要的标注。</li>
+<li><b>崩溃自愈</b>:节点由 nav-bringup <code>respawn=True</code> 拉起;重启后状态回到
+    “未录制”(半截 bag 已由 rosbag2 尽力落盘,notebook 端能识别缺 metadata 的残包)。</li>
+</ul>
+
+<h2>四、手柄与 GUI 改动<span class="en">Gamepad &amp; GUI changes</span></h2>
+
+<div class="warn"><b>⚠ START 键编号未实测。</b>本手柄(罗技经 0079:181c 接收器)键位
+<b>从不按惯例走</b>——L1 曾被厂商标成 SELECT。实现第一步必须上板抓包
+(<code>cap.py</code>,长按 5 秒一次一键)确认 START 的 <code>buttons[]</code> 下标,
+再写进 <code>joy_teleop.py</code>。候选还剩 buttons[5]/[7]/[8]/[9] 一带。
+<span class="en">START button index MUST be captured on-board first — this pad never follows convention.</span></div>
+
+<table>
+<tr><th>入口</th><th>改动</th><th>规模</th></tr>
+<tr><td><code>joy_teleop.py</code></td><td>加 <code>RECORD_BTN</code>(实测编号),上升沿发
+    <code>/record_toggle</code>,启动时按"先见释放态"防按住误触;<code>stop_all()</code>
+    发幂等的 <code>/record_stop</code>(不是 toggle,见 3.1)</td><td>+~12 行</td></tr>
+<tr><td><code>gui/ui</code></td><td>照抄 🛡急刹拨钮:<code>index.html</code> 加 ⏺ 录制按钮,
+    <code>ros.js</code> 订 <code>/recording</code>、advertise <code>/record_toggle</code>,
+    <code>health.js</code> 镜像+点击发翻转;录制中按钮亮红</td><td>+~15 行</td></tr>
+<tr><td><code>bringup_mux_launch.py</code></td><td>加 <code>episode_recorder.py</code> ExecuteProcess,respawn</td><td>+~6 行</td></tr>
+</table>
+
+<h2>五、工作站分析 notebook<span class="en">episode_lab.ipynb</span></h2>
+<p>新文件,与 <code>strafe_test.ipynb</code> 并列;沿用其“ssh 灌板上执行”的成熟套路。cell 规划:</p>
+<ol>
+<li><b>列出</b> — ssh 列 <code>~/episodes</code>:名称、时长、大小、task/success 标注状态,表格输出。</li>
+<li><b>拉取</b> — <code>rsync</code> 指定 episode 到本地 <code>episodes/</code>(git-ignore)。</li>
+<li><b>导出</b> — 板上没有的依赖不装:用一段灌到板上的 <code>rosbag2_py</code> 脚本把
+    odom/cmd_vel/scan 摘要导成 CSV 随包拉回(工作站无 ROS 也能分析;JPEG 帧本来就是标准 JPEG,
+    sqlite3 直读即可回看)。</li>
+<li><b>可视化</b> — odom 轨迹俯视图(叠加地图可选)、四级 cmd_vel 时间线对比
+    (直观看到 mux 仲裁与 safety_stop 压速)、scan 抽帧极坐标图。</li>
+<li><b>回看</b> — 图像帧滑条逐帧浏览,对照时间戳。</li>
+<li><b>标注</b> — 填 <code>task/success/notes</code> 写本地
+    <code>annotations.yaml</code>(独立文件,meta.yaml 与原始 bag 不可变);
+    只留工作站副本,板上是采集缓存,单向流动不搞双向同步。</li>
+<li><b>演示重放(可选)</b> — ssh 触发板上 <code>ros2 bag play --topics /cmd_vel</code>。
+    <span class="bad">仅演示用</span>:走 mux 最低优先级,初始位姿不同轨迹必漂,
+    不能当验证手段;真正的“回放验证”是把录的观测喂给策略离线比对,那是训练侧的事。</li>
+</ol>
+
+<h2>六、验收清单<span class="en">Acceptance checklist</span></h2>
+<ol>
+<li>手柄 START 开录 → 三短滴;GUI 红点同步亮;开 1 分钟遥控 → START 停 → 一短一长,
+    <code>meta.yaml</code> 完整。<span class="en">Start/stop from gamepad, GUI mirrors.</span></li>
+<li>GUI 按钮开录、手柄停录(交叉操作),状态不打架。</li>
+<li>录制中按 Y 全停:车停 + 录制自动收尾 + <code>stopped_by: stop_all</code>。</li>
+<li>录制中 <code>kill -9</code> recorder:respawn 拉起、状态归 False、残包可被 notebook 识别。</li>
+<li>用 fallocate 占满磁盘至阈值下:开录被拒 + 急促蜂鸣;录制中跌破 → 自动停。</li>
+<li>notebook:列出/拉取/画轨迹/图像回看全通;四级 cmd_vel 时间线能看出 safety_stop 压速痕迹。</li>
+<li>断 Wi-Fi 全程录制不受影响(录制器不依赖工作站)。</li>
+</ol>
+
+<h2>七、明确不做<span class="en">Non-goals</span></h2>
+<ul>
+<li>不改造 <code>strafe_test.ipynb</code> —— 它是横移硬件故障(后轮扭矩弱,未解决)的验收工具,保持原样。</li>
+<li>不做板上 Web 标注界面 —— 标注在 notebook 里做,单向数据流。</li>
+<li>不做 LeRobot 格式转换 —— 先 rosbag2 落盘;将来训练需要时加一个离线转换脚本即可,
+    数据契约(话题集合+meta 字段)本设计已固定。</li>
+<li>不做双向 meta 同步 —— 工作站副本为准。</li>
+</ul>
+
+<div class="tldr">
+<b>实施顺序</b> — ① 上板抓 START 键编号 → ② <code>episode_recorder.py</code> + launch 接线 →
+③ <code>joy_teleop.py</code> / GUI 各加一个翻转入口 → ④ 板上实录三条 episode 过验收 1–5 →
+⑤ <code>episode_lab.ipynb</code> 过验收 6。全程不碰 mux/safety_stop 的控制链路,零破坏。
+</div>
+
+<p class="dim">依据 2026-07-13 实机状态(64G 卡扩容后余 ~60%)与仓库 commit 3fbadba 的拓扑编写;
+话题名与键位以板上实测为准。</p>
+
+</body>
+</html>
