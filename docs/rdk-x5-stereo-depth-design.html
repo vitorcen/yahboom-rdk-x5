@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stereo Depth — GS130W 双目深度接入方案 — RDK X5</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0 auto; max-width:980px; padding:24px 20px 80px; background:#0b0e14; color:#cdd6f4;
+         font:15px/1.75 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:24px; margin:8px 0 2px; }
+  h2 { font-size:18px; margin:40px 0 10px; padding-bottom:6px; border-bottom:1px solid #262b3d; }
+  h2 .en, h1 .en { color:#5d6485; font-size:.72em; font-weight:400; margin-left:10px; }
+  h3 { font-size:15px; margin:22px 0 6px; color:#a6b6e8; }
+  p, li { color:#b9c2e0; }
+  code { background:#161a26; border:1px solid #262b3d; border-radius:4px; padding:1px 6px;
+         font:12.5px ui-monospace,Consolas,monospace; color:#8ec8ea; }
+  pre { background:#0f131f; border:1px solid #262b3d; border-radius:8px; padding:12px 16px;
+        overflow-x:auto; font:12.5px/1.7 ui-monospace,Consolas,monospace; color:#cdd6f4; }
+  pre code { background:none; border:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid #262b3d; padding:7px 12px; text-align:left; }
+  th { background:#161a26; color:#a6b6e8; font-weight:600; }
+  td { color:#b9c2e0; }
+  .tldr { background:#12202c; border:1px solid #1f3a50; border-left:4px solid #2b7cb8;
+          border-radius:8px; padding:14px 18px; margin:18px 0; }
+  .warn { background:#2c2312; border:1px solid #50401f; border-left:4px solid #b8862b;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .crit { background:#2c1218; border:1px solid #50202c; border-left:4px solid #b82b45;
+          border-radius:8px; padding:12px 18px; margin:14px 0; }
+  .ok   { color:#7ee2a8; } .bad { color:#f38ba8; } .dim { color:#5d6485; }
+  figure { margin:18px 0; } figcaption { font-size:12px; color:#5d6485; margin-top:6px; }
+  svg { max-width:100%; height:auto; display:block; }
+  ol li, ul li { margin:4px 0; }
+  .meta { color:#5d6485; font-size:12.5px; margin-bottom:26px; }
+</style>
+</head>
+<body>
+
+<div class="crit"><b>⚠️ 本方案已作废(2026-07-15)。</b>硬件改用 <b>USB Orbbec Astra Pro</b> 深度相机,
+不再走 GS130W CSI 双目 + StereoNet(那需占满两个 CSI 口 + OS 升级到 3.3.3,USB 相机简单得多)。
+实际落地见 <code>.memory/rdk-x5-astra-depth.md</code> 与 <code>board/home/sunrise/nav_config/astra_preview*.py</code>。
+本文仅留作 CSI 双目路线的调研/评审记录。
+<span class="en">SUPERSEDED — hardware switched to a USB Orbbec Astra Pro; this GS130W/StereoNet plan is kept only as
+research/review history.</span></div>
+
+<h1>Stereo Depth<span class="en">GS130W dual-CSI stereo → BPU StereoNet → GUI depth preview</span></h1>
+<div class="meta">RDK X5 Robot · GS130W(2×SC132GS 全局快门)· 2026-07-15 · <span class="dim">方案稿 v3,codex 评审(24 条)修订 + 第三座确认 DSI 弃用 + CSI 丝印实机校正</span></div>
+
+<div class="tldr">
+<b>TL;DR</b> — GS130W 双目相机(两根 MIPI 排线,<b>占满 X5 仅有的两个 CSI 口</b>)接入 RDK X5,
+用官方 <b><code>mipi_cam</code> dual 采集 + <code>hobot_stereonet</code> BPU 神经立体匹配</b>产出深度
+(单位 mm)与伪彩可视化,自建<b>极薄 launch:no-web StereoNet + 独立 <code>hobot_codec</code></b>
+发 <code>/stereonet_visual_jpeg</code>,经现有 rosbridge 进 GUI <b>左上角</b>新深度悬浮窗。
+<b>第三个 22pin 座已确认是 DSI 显示口(接错,弃用)</b> —— 板上就两个 CSI 口,<b>全给双目,
+IMX219 退役</b>。GUI <b>左窗=深度伪彩,右窗=全彩图</b>;全彩图改由 <b>GS130W 左目</b>供给
+(SC132GS 彩色,左目经 codec 发 <code>/image_jpeg</code>,话题名不变=录制/预览契约保留)。
+follow-me 的 BPU 手势/人体链因<b>几何契约不同</b>(157° 超广角 vs 62°、分辨率/ROI/HFOV)仍是
+<b>独立几何攻关项</b>,通过前跟随功能置灰 —— 但<b>彩色预览窗本身照常可用</b>。版本硬门槛:官方组合=
+OS ≥3.3.3 + stereonet ≥2.5.0 + mipi_cam ≥2.3.13;先克隆整卡、apt 增量模拟+尝试,凑不齐<b>立即转重刷,不拼包</b>。
+<span class="en">Official pipeline, no-web launch + own codec → /stereonet_visual_jpeg over rosbridge.
+The 3rd 22-pin socket is confirmed DSI and unused. GUI: LEFT = depth pseudo-color, RIGHT = full color
+from the GS130W left eye (published as /image_jpeg, contract preserved). Follow-me's BPU geometry
+adaptation stays a separate project, but the color preview window itself works from day one.</span>
+</div>
+
+<div class="crit">
+<b>本稿已按 codex 评审修订(2026-07-15,24 条)。</b>初稿四个结论被否决:
+①"第三 CSI 并存"当基线 → <b>第三座经用户核对确认是 DSI(接错,弃用)</b>,并存分支彻底删除,板上就两路 CSI;
+②"左目无缝顶替 <code>/image_raw</code> 零破坏" → 几何契约完全不同(157° 超广角 vs 62°、640×352@推理帧率 vs
+960×544@30、ROI/HFOV/增益全错),改为独立攻关分支;
+③"官方 web-visual launch 与现有 :8000 并存" → 端口冲突,改 no-web launch + 独立 codec;
+④"<code>RGB_SOURCE</code> 运行时选源变量" → 删除;<b>模式切换</b>(用户后续明确"要切换,以后还会切单相机")
+改用 systemd <code>Conflicts=</code> 整栈互换(§四,复用板上 mapping↔nav 同款,非新机制)。
+另补:QoS best-effort 匹配、hbmem 与普通 ROS 消息边界、NV12 平面拆分布局、标定/极线/尺度验收门、
+BPU <b>先互斥后并发</b>、apt 成功条件写死、克隆整卡而非只备份 home。
+</div>
+
+<div class="warn">
+<b>先过硬件核验门(§一),再谈软件。</b>2026-07-15 实机复核:<b>板上丝印 CSI1</b>
+(<code>host0/i2c-6</code>)插已知好的 IMX219 后检出 <code>0x10</code>,<code>/image_raw</code> 与
+<code>/image_jpeg</code> 均恢复约 27–30 FPS,该口基线已通过;<b>板上丝印 CSI2</b>
+(<code>host2/i2c-4</code>)仍待用同一对照相机复验。GS130W 此前两目均未被 I2C 检出、
+<code>mipi_cam</code> 报 <code>cap capture init failure</code>。此时升级会把硬件故障与版本变化搅在一起 ——
+<b>必须先在 3.0.0 上完成 CSI2 对照基线和 GS130W 逐目探测</b>,最后才升级。
+</div>
+
+<h2>一、硬件核验门<span class="en">Gate 0: restore a known baseline first</span></h2>
+
+<h3>已核实的板载事实(2026-07-15 板勘)</h3>
+<ul>
+<li>板型 <code>board_id=302</code>(RDK X5 V1.0),<code>/etc/board_config.json</code> 声明
+  <b>camera_num=2</b>:<code>host0 ↔ i2c-6</code>(板上丝印 <b>CSI1</b>)、<code>host2 ↔ i2c-4</code>(板上丝印 <b>CSI2</b>)。
+  SoC 侧只有两路相机 VIN 资源可用 —— 这是<b>硬件事实,不是配置项</b>。</li>
+<li>GS130W = 双 SC132GS(1280×1080@120fps,157° DFoV,基线 ≈0.08 m,出厂标定在模组 EEPROM),
+  两根 22pin 排线<b>占满 host0+host2</b>。排线有 CAM/RDK 方向标注,插反=全灭。</li>
+<li>板上已有 <code>libsc132gs.so</code>(<code>/usr/hobot/lib/sensor/</code>),但 3.0.0 内核/VIN 侧
+  对 SC132GS 双目的支持<b>待验</b>(论坛有旧镜像缺驱动先例)。</li>
+<li><b>第三个 22pin 座 = DSI 显示口(已确认,弃用)</b>:X5 官方硬件=2×CSI + 1×DSI,外观相同,
+  之前 IMX219 接到这里是<b>接错口</b> —— 插 DSI 永远不会被认到,正是当前 i2c 全空的原因之一。
+  本方案不再考虑三口并存,IMX219 退役,两个 CSI 全给双目。</li>
+</ul>
+
+<h3>核验顺序(严格串行,每步是下一步的对照组)</h3>
+<ol>
+<li><b>断电核对</b>:两个 CSI 座丝印/排线方向/锁扣;DSI 座保持空置(IMX219 已从错口拔下)。</li>
+<li><b>恢复已知基线</b>:用确认好过的 IMX219,在 host0、host2 <b>分别单独</b>点亮
+  (<code>i2cdetect</code> 出 0x10 + mipi_cam 出图)。这一步证明两个座、cam-service、
+  <code>/dev/isc</code>、3.0.0 采集链都活着 —— 排除"插拔弄坏了什么"。</li>
+<li><b>GS130W 逐目探测</b>:左右目排线分别单插,<code>i2cdetect -y -r 4 / -r 6</code> 期望
+  0x32/0x33(+0x50 EEPROM);若扫出 SC230AI 地址段则是另一款模组,路线重定。记录每一步失败点。</li>
+<li><b>双目合采</b>:两线齐插,dual launch 上电,验 LPWM 硬同步与左右顺序(遮镜法:蒙左镜头看哪路黑)。</li>
+</ol>
+<pre><code># 板上(ROS_DOMAIN_ID=99):
+i2cdetect -y -r 4 ; i2cdetect -y -r 6
+dmesg | grep -iE 'sc132|imx219|csi|vin'
+systemctl stop mipi-cam        # 试运行前停旧服务,避免抢 host</code></pre>
+
+<div class="warn"><b>基线结论(已定):两口全给双目,IMX219 退役。</b>
+第三座是 DSI 显示口不是相机口,"IMX219 迁 CSI 并存"物理不成立。§四保留最小配置能力,只为
+IMX219 将来换 USB 摄像头或走"双目左目回喂"时能接回,<b>不是</b>为了现在并存。</div>
+
+<h2>二、数据通路<span class="en">dataflow: dual MIPI → BPU → JPEG → rosbridge → GUI</span></h2>
+
+<figure>
+<svg viewBox="0 0 940 420" xmlns="http://www.w3.org/2000/svg" font-family="system-ui" font-size="12">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#5d6485"/></marker>
+  </defs>
+  <style>
+    .box  { fill:#161a26; stroke:#3a4260; rx:8; }
+    .tros { fill:#12202c; stroke:#2b7cb8; }
+    .own  { fill:#1b2618; stroke:#5a9e6f; }
+    .gui  { fill:#241b2e; stroke:#8f6fb8; }
+    .t    { fill:#cdd6f4; font-weight:600; }
+    .s    { fill:#8b93b5; font-size:10.5px; }
+    .topic{ fill:#8ec8ea; font-size:10.5px; font-family:ui-monospace,monospace; }
+    .lg   { fill:#5d6485; font-size:10.5px; }
+    .fl   { stroke:#5d6485; stroke-width:1.5; fill:none; marker-end:url(#ar); }
+  </style>
+
+  <!-- stereo chain -->
+  <rect class="box" x="10" y="30" width="130" height="66" rx="8"/>
+  <text class="t" x="24" y="52">GS130W 双目</text>
+  <text class="s" x="24" y="68">2×SC132GS 全局快门</text>
+  <text class="s" x="24" y="82">EEPROM 出厂标定</text>
+
+  <rect class="box tros" x="190" y="30" width="150" height="66" rx="8"/>
+  <text class="t" x="204" y="52">mipi_cam (dual)</text>
+  <text class="s" x="204" y="68">host0 + host2 · LPWM 同步</text>
+  <text class="s" x="204" y="82">NV12 上下拼帧</text>
+
+  <rect class="box tros" x="400" y="30" width="170" height="66" rx="8"/>
+  <text class="t" x="414" y="52">hobot_stereonet</text>
+  <text class="s" x="414" y="68">BPU · 640×352 · no-web</text>
+  <text class="s" x="414" y="82">校正+极线对齐内置</text>
+
+  <rect class="box own" x="630" y="30" width="130" height="66" rx="8"/>
+  <text class="t" x="644" y="52">hobot_codec</text>
+  <text class="s" x="644" y="68">独立实例(自建)</text>
+  <text class="s" x="644" y="82">bgr8 → JPEG</text>
+
+  <rect class="box gui" x="810" y="14" width="120" height="52" rx="8"/>
+  <text class="t" x="824" y="36">GUI 左上</text>
+  <text class="s" x="824" y="52">🌊 深度悬浮窗</text>
+
+  <line class="fl" x1="140" y1="63" x2="190" y2="63"/>
+  <text class="lg" x="144" y="56">2×MIPI</text>
+  <line class="fl" x1="340" y1="63" x2="400" y2="63"/>
+  <text class="topic" x="330" y="112">/image_combine_raw</text>
+  <line class="fl" x1="570" y1="63" x2="630" y2="63"/>
+  <text class="topic" x="548" y="56">visual (bgr8)</text>
+  <line class="fl" x1="760" y1="55" x2="810" y2="45"/>
+  <text class="topic" x="716" y="128">/stereonet_visual_jpeg</text>
+
+  <text class="topic" x="414" y="128">/StereoNetNode/stereonet_depth (mm,编码上板核验) · pointcloud2 关闭 · origin_* 关闭</text>
+
+  <!-- rosbridge -->
+  <rect class="box own" x="630" y="160" width="300" height="52" rx="8"/>
+  <text class="t" x="644" y="182">rosbridge :9090(现有,不动)</text>
+  <text class="s" x="644" y="198">QoS 匹配 best-effort · 队列深度 1,只丢旧帧</text>
+  <line class="fl" x1="695" y1="96" x2="720" y2="160"/>
+  <line class="fl" x1="800" y1="160" x2="850" y2="70"/>
+
+  <!-- left eye -> color: first-class deliverable -->
+  <rect class="box tros" x="190" y="250" width="270" height="70" rx="8"/>
+  <text class="t" x="204" y="272">官方 /image_left_raw → codec</text>
+  <text class="s" x="204" y="290">dual_combine=1 原生发左目</text>
+  <text class="s" x="204" y="306">→ /image_jpeg(名字不变=契约)</text>
+  <path class="fl" d="M340 96 C 340 170, 300 210, 300 250"/>
+
+  <rect class="box gui" x="490" y="250" width="180" height="70" rx="8"/>
+  <text class="t" x="504" y="272">GUI 右窗全彩</text>
+  <text class="s" x="504" y="290">录制 · :8000 照常</text>
+  <line class="fl" x1="460" y1="285" x2="490" y2="285"/>
+
+  <!-- follow-me geometry: separate, dashed -->
+  <rect class="box" x="690" y="250" width="240" height="70" rx="8" stroke-dasharray="6 4"/>
+  <text class="t" x="704" y="270">follow-me 几何(独立)</text>
+  <text class="s" x="704" y="288">157°↔62° 重标定前置灰</text>
+  <text class="s" x="704" y="304">预览不受影响</text>
+  <path class="fl" stroke-dasharray="5 4" d="M670 285 L690 285"/>
+
+  <!-- retired -->
+  <rect class="box" x="10" y="250" width="130" height="66" rx="8" opacity="0.5"/>
+  <text class="t" x="24" y="272">IMX219 单目</text>
+  <text class="s" x="24" y="288">退役(原插 DSI 口)</text>
+  <text class="s" x="24" y="304">DSI≠相机口</text>
+
+  <text class="lg" x="10" y="386">实线=第一阶段交付(左深度 + 右全彩);虚线=follow-me 几何独立立项,不阻塞预览。板内高带宽链
+  (hbmem/零拷贝)与对外普通 ROS 消息是两个边界,rosbridge 一侧必须是普通 sensor_msgs。</text>
+</svg>
+<figcaption>数据通路 v3。第一阶段交付实线:左窗深度 + 右窗全彩(左目拆分保留 /image_jpeg 契约);
+follow-me 的几何重标定是虚线独立分支,不阻塞彩色预览。</figcaption>
+</figure>
+
+<h3>关键设计决定(含 codex 修正)</h3>
+<ul>
+<li><b>不自研立体匹配</b>:hobot_stereonet 官方 BPU 方案,X5 15–25 fps。唯一自建=一个极薄 launch
+  (no-web StereoNet + 独立 codec 实例)。</li>
+<li><b>不启官方 web-visual launch</b>:它自带 websocket 抢 <code>:8000</code>,与现有单目预览端口冲突;
+  且 <code>stereonet_pub_web=false</code> 会连 codec 一起关。所以用 no-web launch + 自己的
+  <code>hobot_codec</code>(<code>codec_in_mode=ros, in_format=bgr8</code>)发
+  <code>/stereonet_visual_jpeg</code>。GUI 走 rosbridge,根本不需要第二个官方网页。</li>
+<li><b>伪彩在板上渲染,GUI 只画 JPEG</b>:深度原图走 rosbridge base64 带宽自杀;
+  <code>stereonet_visual</code>(bgr8 伪彩,官方链路本就喂 codec)压 JPEG 后与现有相机预览同构。</li>
+<li><b>板内话题裁剪</b>:<code>origin_left/right</code>、右目校正图、pointcloud 全关
+  (640×352 NV12 双目 30fps 板内裸流 ≈20MB/s,先爆的是内存带宽/DDS 拷贝,不是 WiFi)。
+  只留 combine、depth、visual。队列深度 1,sensor-data/best-effort,允许丢旧帧。</li>
+<li><b>限流位置明确</b>:在 codec <b>前</b>(StereoNet 可用 <code>infer_thread_num=1</code> 压推理频率,
+  或加薄节流节点)。GUI 少画几帧不减板端成本,只算渲染保护。</li>
+<li><b>QoS 逐边验收</b>:TROS 图像链是 best-effort;每条边用 <code>ros2 topic info -v</code> 核对
+  publisher/subscriber 匹配,rosbridge 实收帧率单独测,不以 <code>topic list</code> 为准。</li>
+<li><b>hbmem 边界</b>:Hobot hbmem 零拷贝消息 rosbridge 序列化不了。板内高带宽链可用 hbmem;
+  凡暴露给 rosbridge/recorder/现有节点的出口,必须是普通 <code>sensor_msgs/Image|CompressedImage</code>。</li>
+<li><b>右窗全彩图 = GS130W 左目(第一阶段交付,用官方原生左目话题)</b>:SC132GS 是彩色 sensor。
+  <b>不自研 splitter</b> —— 官方 <code>hobot_mipi_cam</code> 用 <code>dual_combine=1</code> 本就直接发布
+  <code>/image_left_raw</code>/<code>/image_right_raw</code>(除 <code>/image_combine_raw</code> 外)。
+  直接把 <code>/image_left_raw</code> 接独立 codec 发 <code>/image_jpeg</code>(名字不变 → 右窗/录制/:8000 契约保留),
+  全分辨率、独立于 StereoNet 推理帧率。<b>先做实测门</b>:升级后 <code>ros2 topic list</code> 确认原生左目话题
+  存在及其 encoding/分辨率/帧率,存在即用、关掉不需要的右目独立输出。
+  只有原生左目确实不可用时才退到:①官方 <code>/StereoNetNode/rectify_left_image</code>(640×352、帧率绑推理);
+  ②自研 NV12 左半 splitter(<b>并不"薄"</b>:按实际 width/height/step 逐行复制 Y/UV 双平面,处理
+  1080/1088 padding/stride/旋转/左右序,禁止 data 对半切,必须色块+遮镜+奇偶行+连续帧校验,防"能编码但颜色/左右悄悄错")。</li>
+<li><b>follow-me 的 BPU 几何 = 独立攻关(不阻塞预览)</b>:彩色<b>预览窗</b>好办,但 follow-me 的
+  人体/手势检测 + <code>follow_me.py</code> 追踪把 <code>/image_raw</code>+960×544+HFOV 62°+ROI/方位角/增益
+  <b>写死在 IMX219 几何上</b>;换成 157° 超广角左目后这些全要重标定。攻关清单:检测节点对左目尺寸的
+  接受度 → <code>follow_me.py</code> 几何参数化(IMG_W/H/HFOV 进配置)→ 手势/跟随实测。
+  <b>通过之前跟随功能置灰并标注原因,但右窗彩色预览照常。</b></li>
+</ul>
+
+<h2>三、版本与升级策略<span class="en">the version gate — official combo or reflash</span></h2>
+<table>
+<tr><th>组件</th><th>板上现状</th><th>官方支持组合要求</th></tr>
+<tr><td>RDK OS</td><td>3.0.0(board 302)</td><td><b>≥3.3.3</b>(镜像级,含内核/BSP/VIN)</td></tr>
+<tr><td>tros-humble-hobot-stereonet</td><td class="bad">未装</td><td><b>≥2.5.0</b>(apt 源里有 3.x)</td></tr>
+<tr><td>mipi_cam</td><td>2.3.3</td><td><b>≥2.3.13</b></td></tr>
+<tr><td>SC132GS 驱动</td><td><code>libsc132gs.so</code> 在;内核 VIN 侧待验</td><td>新镜像才稳</td></tr>
+<tr><td>磁盘</td><td class="ok">剩 33G</td><td>无压力</td></tr>
+</table>
+
+<p><b>顺序(用户已拍板 apt 优先;成功条件写死,不拼包):</b></p>
+<ol>
+<li><b>克隆整张 SD 卡</b>(不是只备份 <code>/home/sunrise</code> —— 内核/BSP/系统配置都在变更半径内);
+  同时把板上自研部署与 <code>board/</code> 镜像 diff 归零。</li>
+<li><b>模拟先行</b>:<code>apt-cache policy</code> + <code>apt-get -s install tros-humble-hobot-stereonet</code>
+  看依赖会连带替换哪些 BSP/TROS 包,预判"用户态新、内核旧"的混合风险。</li>
+<li><b>apt 增量执行</b>,重启后核对 <code>/etc/version</code>、内核版本、VIN/cam-service、
+  <code>ros2 pkg xml</code> 版本号。<b>判定标准:必须凑齐官方组合(OS ≥3.3.3 + stereonet ≥2.5.0 +
+  mipi_cam ≥2.3.13)且 IMX219 基线仍能出图。</b></li>
+<li>凑不齐 → <b>立即转重刷 ≥3.3.3</b>,不做软链接/拷 so/改 JSON 的拼装。重刷后
+  <code>deploy_board.sh</code> 恢复全套,逐服务回归(nav2/follow/teleop/safety/recorder/dog)。</li>
+</ol>
+
+<div class="warn"><b>升级破坏面</b>:apt 连带可能升 follow-me 用的 mono2d/gesture 包与 hobot_codec
+(<code>/image_jpeg</code> 消息<b>类型</b>可能从 Image 变 CompressedImage —— recorder/GUI 都要核对,
+"名字没变"不等于契约没变);mipi_cam 2.3.3→2.5.x 参数名有代际差,一律以装出来的 launch 为准。</div>
+
+<h2>四、相机模式切换<span class="en">mode switch, reusing the proven mapping↔nav pattern</span></h2>
+<p>需求是<b>切换</b>:现在双目(左深度+右全彩),以后可能切回<b>单相机</b>。两目占满两口、单相机只用一口,
+物理上<b>互斥</b> —— 这与项目里 <code>mapping.service</code> ↔ <code>nav2</code> 用 <code>Conflicts=</code>
+整栈互换<b>是同一个问题</b>。不发明新机制,直接复用这套(板上还有现成 <code>camera_mode.sh</code> 可扩展)。</p>
+
+<figure>
+<svg viewBox="0 0 900 210" xmlns="http://www.w3.org/2000/svg" font-family="system-ui" font-size="12">
+  <style>
+    .b{fill:#161a26;stroke:#3a4260;rx:8;} .tros{fill:#12202c;stroke:#2b7cb8;}
+    .t{fill:#cdd6f4;font-weight:600;} .s{fill:#8b93b5;font-size:10.5px;}
+    .topic{fill:#8ec8ea;font-size:10px;font-family:ui-monospace,monospace;}
+  </style>
+  <rect class="b" x="20" y="80" width="150" height="50" rx="8"/>
+  <text class="t" x="34" y="100">camera_mode.sh</text>
+  <text class="s" x="34" y="116">stereo | mono</text>
+  <text class="s" x="34" y="72" fill="#8f6fb8">GUI 📷 切换按钮 / 手动</text>
+
+  <rect class="b tros" x="240" y="20" width="270" height="70" rx="8"/>
+  <text class="t" x="254" y="42">stereo-depth.service</text>
+  <text class="s" x="254" y="60">dual mipi(host0+host2)+ StereoNet no-web</text>
+  <text class="s" x="254" y="76">+ codec×2 · Conflicts=mipi-cam</text>
+
+  <rect class="b tros" x="240" y="120" width="270" height="70" rx="8"/>
+  <text class="t" x="254" y="142">mipi-cam.service(单目)</text>
+  <text class="s" x="254" y="160">single mipi(channel:=$MONO_CHANNEL)</text>
+  <text class="s" x="254" y="176">+ codec · Conflicts=stereo-depth</text>
+
+  <rect class="b" x="590" y="20" width="290" height="70" rx="8"/>
+  <text class="t" x="604" y="42">GUI 双窗</text>
+  <text class="topic" x="604" y="60">/image_jpeg → 右窗全彩(两模式都有)</text>
+  <text class="topic" x="604" y="76">/stereonet_visual_jpeg → 左窗深度(仅双目)</text>
+
+  <rect class="b" x="590" y="120" width="290" height="70" rx="8"/>
+  <text class="t" x="604" y="142">GUI 双窗</text>
+  <text class="topic" x="604" y="160">/image_jpeg → 右窗全彩</text>
+  <text class="s" x="604" y="176">无深度流 → 左窗自动隐藏(有流才显示)</text>
+
+  <path d="M170 100 L240 55" stroke="#5d6485" stroke-width="1.5" fill="none"/>
+  <path d="M170 110 L240 155" stroke="#5d6485" stroke-width="1.5" fill="none"/>
+  <path d="M510 55 L590 55" stroke="#5d6485" stroke-width="1.5" fill="none"/>
+  <path d="M510 155 L590 155" stroke="#5d6485" stroke-width="1.5" fill="none"/>
+</svg>
+<figcaption>模式切换。两服务互为 <code>Conflicts=</code>,启一个自动停另一个(mapping↔nav 同款,已在板上验证)。
+GUI 不需要知道当前模式:右窗恒订 <code>/image_jpeg</code>,左窗靠 <code>/stereonet_visual_jpeg</code>
+有没有流自动显隐 —— 同"相机窗有流才出现"的既有行为。</figcaption>
+</figure>
+
+<pre><code># /home/sunrise/nav_config/camera.conf   (board/ 镜像同步)
+# Current mode. camera_mode.sh writes this; services read it; GUI mirrors it.
+CAMERA_MODE=stereo            # stereo | mono
+# Single-cam params (only used in mono mode). channel = mipi host, legal 0|2.
+MONO_SENSOR=IMX219
+MONO_CHANNEL=0</code></pre>
+<ul>
+<li><b>互斥靠 <code>Conflicts=</code>,但不是零风险照搬</b>:<code>Conflicts=</code> 只保证冲突、<b>不保证先停净再启</b>。
+  两 unit 都要补:<code>After=</code> 建立 stop-before-start 顺序、<code>KillMode=control-group</code> +
+  <code>TimeoutStopSec=</code> 确保多进程 launch 的全部子进程(mipi/stereonet/codec)被干净收掉、
+  验收"停止后无残留进程、无相机设备占用"(否则新栈在旧 VIN/codec 未释放时抢起来)。
+  <code>camera_mode.sh stereo|mono</code> = <b>flock 防并发 + 原子写 conf + <code>systemctl start</code> 目标 +
+  失败回滚</b>。<b>开机只 enable 一个 unit</b>(按 conf 拉起,两个都 enable 会启动事务竞争)。
+  骨架是 <code>mapping.service Conflicts=nav2</code> 的翻版,但这些边界条件要逐条落。</li>
+<li><b>两模式共用 <code>/image_jpeg</code> 契约</b>:双目模式由左目 codec 发,单目模式由单相机 codec 发 ——
+  右窗/录制/:8000 <b>永远订同一个话题</b>,切模式对它们透明(Never break userspace)。</li>
+<li><b>深度只在双目模式存在</b>:<code>/stereonet_visual_jpeg</code> 单目模式不发,GUI 左窗自动隐藏。
+  不需要 GUI 显式判模式 —— 这是初稿 <code>RGB_SOURCE</code> 抽象被 codex 否掉后的<b>正解</b>:
+  用"话题有没有流"表达模式,而不是塞一个前端状态变量。</li>
+<li><b>GUI 不包装物理热插拔</b>:官方明确<b>禁止带电插拔相机</b>,所以"换单相机"= <b>关机 → 换线 → 开机按 conf 启动</b>,
+  不是点一下 GUI 就切。GUI 侧只做两件事:①<b>显示当前模式</b>(读 <code>camera_mode</code> 的 invoke,像
+  <code>mFollow</code> 那样反映真实状态);②双目↔单目<b>纯软件重启</b>(排线已到位、不涉插拔时)可给一个
+  <code>invoke('camera_mode',{mode})</code> 按钮触发 <code>camera_mode.sh</code>,但明确"切相机需先断电换线"。
+  日常最省事路径还是改 conf + 重启,不追求 GUI 一键。</li>
+<li><b>GUI 渲染无模式状态,但控制有</b>:右窗/左窗靠"有流才显示 + 掉流看门狗"自动显隐(已实现),
+  <b>不需前端判模式</b>;但模式按钮的当前态、切换中/失败提示仍是显式状态。切换存在<b>停旧启新的断流窗口</b>,
+  §七 G4 的"不断流"应理解为"断流限制在数秒内、不混流",看门狗保证旧帧不残留。</li>
+</ul>
+
+<h2>五、GUI 深度窗<span class="en">last step, not first</span></h2>
+<ul>
+<li>感知链验收(§七 G1–G3)<b>全过之后</b>才动 GUI —— 浮窗抽取没有技术风险价值,不许阻塞主线。</li>
+<li><b>左上角</b> <code>#depthbox</code>(<code>top:10px; left:10px</code>),与右上 <code>#cambox</code>
+  同款拖拽/等比拉伸 —— 把 camera.js 的拖拽逻辑抽成 <code>makeFloatBox()</code> 公用,随本步一起做。</li>
+<li>订阅 <code>/stereonet_visual_jpeg</code> → base64 img,有流才显示,&gt;2s 无帧隐藏;
+  仪表条加 iDepth 新鲜度灯;窗角一行伪彩图例(红近蓝远),不做测量标尺。</li>
+<li>带宽预算:640×352 JPEG ≈30–60KB/帧 ×10fps ×1.33(base64) ≈0.5–0.8MB/s,叠加相机流后弱网角落实测
+  rosbridge <b>实收帧率</b>与端到端延迟(不是只看 topic hz)。</li>
+</ul>
+
+<h2>六、破坏面与资源<span class="en">what breaks, what contends</span></h2>
+<table>
+<tr><th>受影响物</th><th>风险</th><th>对策</th></tr>
+<tr><td>follow-me 追踪/手势</td><td>输入几何从 62° 换成 157° 超广角左目,ROI/方位角/增益失配</td>
+    <td><b>只停用跟随功能</b>(GUI 开关置灰+标注"待左目几何适配");左目几何攻关验收后恢复。
+        <b>彩色预览窗不受影响</b></td></tr>
+<tr><td>episode_recorder / GUI 右窗 / :8000</td><td>升级后 <code>/image_jpeg</code> 消息类型可能变(Image↔CompressedImage)</td>
+    <td>话题名+语义(彩色图)保留 → 右窗/录制/预览照常;升级后核对完整消息类型再定;深度第一版只录压缩 visual(按需)</td></tr>
+<tr><td>BPU</td><td>StereoNet 常驻推理 vs 跟随手势模型争抢</td>
+    <td><b>第一阶段直接互斥</b>:follow-me 启动即停 StereoNet(反之亦然);实测有余量才谈并发</td></tr>
+<tr><td>板内带宽/CPU</td><td>多路未压缩图 DDS 拷贝先于 WiFi 爆掉</td>
+    <td>关 origin/右目/点云;队列 1;监控 CPU/RSS/BPU 占用与 dropped frames</td></tr>
+<tr><td>TF/点云</td><td>StereoNet 自发静态 TF 可能与机器人 TF 冲突</td>
+    <td>预览阶段关点云;将来启用前单独标定 <code>base_link→stereo_camera_link</code> 并查重复 publisher</td></tr>
+<tr><td>apt 升级连带</td><td>tros 全家桶跳版(2024-09→2026-04)</td>
+    <td>模拟先行+官方组合判定+整卡克隆回滚;升级后全功能回归</td></tr>
+</table>
+
+<h2>七、实施计划与验收门<span class="en">gates, each independently verifiable</span></h2>
+<ol>
+<li><b>G0 硬件基线</b>:断电核对两 CSI 座丝印/排线方向(DSI 座空置)→ 已知好相机在 host0/host2
+  分别单独点亮(对照组)→ GS130W 逐目 i2c 探测 → 双目合采 + 遮镜验左右 + LPWM 同步。
+  <span class="dim">任何一步失败,故障半径已知。</span></li>
+<li><b>G1 版本门</b>:克隆整卡 → apt 模拟+执行 → 官方组合判定;不齐转重刷+deploy 恢复。</li>
+<li><b>G2 深度正确性</b>:StereoNet no-web 跑通;<b>验收=极线误差 &lt;1px(棋盘格)+ 已知距离
+  0.5/1/2/3 m 尺度测试 + 遮镜左右序确认</b>,不是"网页出现伪彩"。记录 depth 话题实际 encoding/step。</li>
+<li><b>G3 ROS 双出口</b>:独立 codec 发 <code>/stereonet_visual_jpeg</code>(深度)+ 官方 <code>/image_left_raw</code>
+  接 codec 发 <code>/image_jpeg</code>(全彩,先实测原生左目话题存在);普通订阅者与 rosbridge 均实收
+  (QoS 逐边核对),板端 CPU/BPU/内存记录在案。</li>
+<li><b>G4 模式切换</b>:<code>camera_mode.sh</code> + 两服务 <code>Conflicts=</code>+<code>After=</code>+
+  <code>KillMode=control-group</code>;验收=停止后无残留进程/无设备占用,stereo↔mono 切换
+  <b>断流限数秒内、不混流</b>(看门狗保旧帧不残留),深度按模式显隐。</li>
+<li><b>G5 GUI</b>:<span class="ok">✅ 已提前实现(纯前端,对既定话题契约,浏览器模式可结构验证):</span>
+  左窗深度 <code>#depthbox</code> + 右窗全彩 <code>#cambox</code> + <code>makeFloatBox()</code> 抽取共用 +
+  iDepth 新鲜度灯 + 有流才显示的自动显隐。待板上出话题后验弱网实收帧率/延迟。</li>
+<li><b>G6 回归与收尾</b>:遛狗/导航/录制回归(跟随按几何停用状态验证提示正确);系统 Tab 板卡图更新
+  (CSI 两路→双目);systemd 自启;follow-me 左目几何攻关另行立项。</li>
+</ol>
+
+<h2>八、三问自检<span class="en">the three questions</span></h2>
+<ul>
+<li><b>真问题?</b> 是 —— 深度感知补 2D 雷达的高度盲区(桌面/悬空物),是数据集与 VLA 的传感基础。</li>
+<li><b>更简单方案?</b> 主线已最简:官方组件 + 一个薄 launch + 一个 service + GUI 一个窗。
+  被砍掉的复杂化:自研立体匹配、GUI 传原始深度自己上色、RGB_SOURCE 运行时切换抽象、GUI 选口设置页、
+  第二个官方网页预览。</li>
+<li><b>破坏什么?</b> 右窗彩色/录制/:8000 靠 <code>/image_jpeg</code> 契约保留,切模式对它们透明;
+  <b>唯一诚实停用的是 follow-me 的跟随/手势功能</b>(几何依赖 IMX219,换超广角左目要重标定,独立攻关门)。
+  系统级风险(apt 连带/BPU 争抢)各有判定标准与回滚手段。</li>
+</ul>
+
+<h2>九、待核实清单<span class="en">open items</span></h2>
+<ol>
+<li>第三座身份(默认 DSI;翻案需原理图/设备树证据)。</li>
+<li>apt 增量能否凑齐官方组合(OS ≥3.3.3 + stereonet ≥2.5.0 + mipi_cam ≥2.3.13);不齐即重刷。</li>
+<li>GS130W 实为 SC132GS 版(i2c 0x32/0x33)—— 扫出 SC230AI 则路线重定。</li>
+<li>装出来的 mipi_cam/stereonet 实际参数名与 launch 清单(代际差,以板上为准)。</li>
+<li><code>stereonet_depth</code>/<code>rectify_left_image</code> 实际 encoding/step/帧率(上板 echo 核验)。</li>
+<li>升级后 <code>/image_jpeg</code> 的完整消息类型(Image vs CompressedImage)。</li>
+<li>StereoNet 与手势模型 BPU 并发余量(第一阶段互斥,实测后再议)。</li>
+<li>左目攻关分支:mono2d/gesture 对 640×352 的接受度、HFOV 参数化改造量、是否需要 NV12 splitter。</li>
+</ol>
+
+</body>
+</html>

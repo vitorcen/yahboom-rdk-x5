@@ -1,0 +1,20 @@
+[Unit]
+Description=Orbbec Astra Pro depth+color + GUI preview (astra_preview: depth->colormap JPEG, color->/image_jpeg)
+# Replaces mipi-cam.service: the CSI camera is gone, this USB Astra is the camera.
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+# astra_preview drives the camera directly via OpenNI2 (depth) + UVC (color) —
+# NOT the vendor astra_camera ROS driver, whose laser/LDP handling leaves depth
+# all-zero on this unit. Needs: pip3 install primesense.
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; exec python3 /home/sunrise/nav_config/astra_preview.py"
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

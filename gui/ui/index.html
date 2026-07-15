@@ -44,6 +44,7 @@
   <span class="ind" id="iScan" title="/scan 雷达数据流"><span class="dot"></span>雷达</span>
   <span class="ind" id="iMap"  title="/map 地图数据流"><span class="dot"></span>地图</span>
   <span class="ind" id="iCam"  title="/image_jpeg 相机数据流"><span class="dot"></span>相机</span>
+  <span class="ind" id="iDepth" title="/camera/depth/color_jpeg Astra 深度流"><span class="dot"></span>深度</span>
   <span class="ind" id="iNav"  title="Nav2 导航（/plan 活跃＝导航中）"><span class="dot"></span><span id="navTxt">空闲</span></span>
   <span class="ind" id="iKey"  title="键盘遥控 WASD/方向键·Q/E 横移·空格急停"><span class="dot"></span>⌨️<span id="keyTxt"></span></span>
 
@@ -100,7 +101,8 @@
           </div>
         </div>
       </div>
-      <div id="cambox" title="拖动移动 · 右下角拉伸改大小"><img id="cam" alt="camera"><canvas id="camov"></canvas><div id="camgrip"></div></div>
+      <div id="cambox" title="全彩相机（双目模式=左目；单目模式=单相机）· 拖动移动 · 右下角拉伸"><img id="cam" alt="camera"><canvas id="camov"></canvas><div id="camgrip"></div></div>
+      <div id="depthbox" title="双目深度伪彩（红近蓝远，仅双目模式）· 拖动移动 · 右下角拉伸"><img id="depth" alt="depth"><span id="depthlegend">🔴近 · 🔵远</span><div id="depthgrip"></div></div>
     </div>
   </div>
 </div>

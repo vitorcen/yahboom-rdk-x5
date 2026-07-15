@@ -7,7 +7,7 @@ import { onTopic, connected, send, cancelAllGoals } from './ros.js';
 // ---- topic freshness -> dots ----
 const last = {};                                  // topic -> performance.now()
 let gotMap = false;                               // /map is latched: sent once on subscribe
-for (const t of ['/scan', '/map', '/image_jpeg', '/plan'])
+for (const t of ['/scan', '/map', '/image_jpeg', '/camera/depth/color_jpeg', '/plan'])
   onTopic(t, () => { last[t] = performance.now(); if (t === '/map') gotMap = true; });
 
 const dot = (id, cls) => { $(id).firstElementChild.className = 'dot' + (cls ? ' ' + cls : ''); };
@@ -17,6 +17,7 @@ setInterval(() => {
   dot('iScan', fresh('/scan', 2000) && 'up');
   dot('iMap',  connected() && gotMap && 'up');
   dot('iCam',  fresh('/image_jpeg', 2000) && 'up');
+  dot('iDepth', fresh('/camera/depth/color_jpeg', 2000) && 'up');
   const nav = fresh('/plan', 2500);              // Nav2 republishes /plan while navigating
   dot('iNav', nav && 'nav');
   $('navTxt').textContent = nav ? '导航中' : '空闲';

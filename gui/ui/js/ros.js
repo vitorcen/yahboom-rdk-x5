@@ -43,6 +43,7 @@ export function connect() {
     sub('/tf', 'tf2_msgs/TFMessage', 100);
     sub('/tf_static', 'tf2_msgs/TFMessage');
     sub('/image_jpeg', 'sensor_msgs/CompressedImage', 66);
+    sub('/camera/depth/color_jpeg', 'sensor_msgs/CompressedImage', 100);  // Astra depth pseudo-color, ~10fps
     sub('/hobot_hand_gesture_detection', 'ai_msgs/msg/PerceptionTargets', 100);
     sub('/voltage', 'std_msgs/Float32', 5000);
     sub('/safety_enabled', 'std_msgs/Bool');   // latched by safety_stop

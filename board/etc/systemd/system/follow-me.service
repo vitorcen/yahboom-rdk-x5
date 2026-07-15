@@ -1,7 +1,10 @@
 [Unit]
 Description=Follow-me: BPU perception chain + follow node (OK lock / Palm stop)
-After=mipi-cam.service nav-bringup.service ms200-lidar.service
-Wants=mipi-cam.service nav-bringup.service ms200-lidar.service
+# Camera moved from mipi-cam (retired) to the USB Astra (astra-cam). NOTE:
+# follow-me's BPU chain still wants /image_raw and IMX219 geometry, so it needs
+# repointing to the Astra color before it works again — tracked separately.
+After=nav-bringup.service ms200-lidar.service
+Wants=nav-bringup.service ms200-lidar.service
 # Never give up retrying: at boot the camera/BPU may not be ready yet and the
 # chain dies fast — the default 5-tries-in-10s burst limit then parked the
 # unit as failed, which is why the GUI switch showed OFF after a reboot.

@@ -7,4 +7,5 @@
 - [激光急刹 safety_stop](rdk-x5-safety-stop.md) — rclcpp 净空比例限速(固定阈值高速必撞);A键/GUI开关;蜂鸣约定;Y键全停
 - [Episode 录制系统](rdk-x5-episode-recorder.md) — 手柄/GUI 一键 rosbag2 录制;toggle/stop 分离、QoS override、.partial 等评审教训;episode_lab 分析
 - [遛狗模式](rdk-x5-dog-walk.md) — 纯反应式雷达漫游/闻/后退/转身;mux P1 停动作不停功能;无急刹门禁;codex 评审;活泼化调参;7.3V 欠压未实测
+- [Astra 深度相机](rdk-x5-astra-depth.md) — USB Orbbec Astra Pro 深度进 GUI 左窗,板上实测 ~9fps;裸 OpenNI2 直读(弃坏掉的 astra_camera 驱动);USB2 深度/彩色不可兼得(彩色默认关);独立供电 hub
 - [提交纪律](feedback-atomic-commits.md) — 迭代不提交,功能稳定后原子提交;碎提交软回退合并
