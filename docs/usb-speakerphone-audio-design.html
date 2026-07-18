@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USB 全向麦音箱 · 全模态语音通道方案 | USB Speakerphone Audio Channel</title>
+<style>
+  :root { --fg:#1f2430; --muted:#5b6472; --line:#dfe3ea; --accent:#0b6bcb; --ok:#1a7f37; --warn:#b35900; --bad:#c0392b; --bg:#fff; --panel:#f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e6e9ef; --muted:#9aa4b2; --line:#333a45; --accent:#5ab0ff; --ok:#4cc26a; --warn:#e0a45c; --bad:#e76e5b; --bg:#14171c; --panel:#1d2229; }
+  }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; color:var(--fg); background:var(--bg); max-width:960px; margin:0 auto; padding:24px 20px 80px; line-height:1.7; }
+  h1 { font-size:1.5em; border-bottom:2px solid var(--accent); padding-bottom:8px; }
+  h2 { font-size:1.2em; margin-top:2em; border-left:4px solid var(--accent); padding-left:10px; }
+  h1 small, h2 small { display:block; font-size:.62em; color:var(--muted); font-weight:normal; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:.93em; }
+  th,td { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--panel); }
+  code { background:var(--panel); padding:1px 5px; border-radius:4px; font-size:.9em; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow-x:auto; font-size:.88em; line-height:1.5; }
+  .tldr { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--ok); border-radius:8px; padding:12px 16px; margin:16px 0; }
+  .warn { border-left-color:var(--warn); }
+  .ok { color:var(--ok); font-weight:bold; } .no { color:var(--bad); font-weight:bold; } .mid { color:var(--warn); font-weight:bold; }
+  figure { margin:16px 0; } figcaption { color:var(--muted); font-size:.85em; text-align:center; }
+  svg { max-width:100%; height:auto; display:block; margin:0 auto; }
+  svg text { font-family:-apple-system,"PingFang SC",sans-serif; }
+</style>
+</head>
+<body>
+
+<h1>USB 全向麦音箱 · 全模态语音通道方案<small>USB omnidirectional speakerphone as the broad audio I/O channel for omni-modal LLM</small></h1>
+
+<div class="tldr">
+<b>TL;DR</b>：车上现有的 CI1302 语音模块是封闭的"关键词对讲机"——麦克风音频不出芯片、喇叭只能放固件里烧死的 TTS 词条，<b>没有任何任意音频进出的通路</b>（mp3 物理放不了）。全模态大模型需要的是原始音频流双工通道：加一个 <b>USB 全向麦音箱一体（UAC 免驱 speakerphone）</b>，<code>arecord</code> 拿麦克风流、<code>aplay/mpg123</code> 播任意音频，即插即用。CI1302 降级保留为<b>离线唤醒词 + 应急命令</b>通道，分工合理。
+<br><span style="color:var(--muted)">EN: The CI1302 module is a closed keyword-matching device with no raw-audio path. Add a driverless USB Audio Class speakerphone for full-duplex raw audio; keep CI1302 as an offline wake-word / fallback command channel.</span>
+</div>
+
+<h2>1. 现状盘点<small>Current audio landscape on the robot</small></h2>
+<table>
+<tr><th>通道</th><th>输入 (mic→host)</th><th>输出 (host→speaker)</th><th>判定</th></tr>
+<tr><td><b>CI1302 语音模块</b>（启英泰伦，串口/IIC 协议）</td><td class="no">✗ 音频只进芯片内部做离线识别，主机只收 5 字节协议帧 <code>AA FF &lt;type&gt; &lt;id&gt; FB</code></td><td class="no">✗ 只能触发固件内预烧 TTS 词条（≤300 条，改一句话=云平台重做固件+烧录）</td><td class="no">不可用作宽泛 I/O</td></tr>
+<tr><td><b>板载 ES8326 codec</b>（RDK X5 耳机座，<code>card 0 duplexaudio</code>）</td><td class="mid">△ 有 ADC，但没接麦克风</td><td class="mid">△ 有 DAC，但没接喇叭；接有源小音箱即通</td><td class="mid">备用输出</td></tr>
+<tr><td><b>USB 全向麦音箱一体</b>（本方案，待购）</td><td class="ok">✓ 48kHz 原始流，全向拾音+降噪</td><td class="ok">✓ 任意音频/mp3/TTS 流</td><td class="ok">主通道</td></tr>
+</table>
+
+<p>实测佐证（2026-07-18 板上）：CI1302 模块当前 USB 线<b>只供电未枚举</b>（dmesg 无新设备）；两个 USB 串口分别被雷达（<code>ttyACM0</code>）和底盘驱动（<code>ttyUSB0</code>）占用；40-pin i2c-5 上的 <code>0x0d</code> 是底盘罗盘 QMC5883L 而非语音模块。要用 CI1302 协议通道需换带数据的 Type-C 线（滑动开关拨右=STC8 串口）或按教程杜邦线接 IIC。</p>
+
+<h2>2. 选型要点<small>What to buy — selection criteria</small></h2>
+<table>
+<tr><th>指标</th><th>要求</th><th>为什么</th></tr>
+<tr><td>协议</td><td><b>USB Audio Class (UAC1/2) 免驱</b></td><td>Linux/aarch64 零驱动，<code>aplay -l</code> 直接可见；避开任何"需装驱动/APP"的型号</td></tr>
+<tr><td>回声消除</td><td><b>硬件 AEC 必选</b></td><td>机器人喇叭和麦在同一机身上，播 TTS 时自听会污染 ASR；硬件 AEC 免去板上软件 AEC 的 CPU 开销</td></tr>
+<tr><td>拾音</td><td>全向 (360°)，标称 ≥2m 拾音距离，带降噪/AGC</td><td>小车会动，人不会贴着说话；雷达/电机有底噪</td></tr>
+<tr><td>采样</td><td>capture ≥16kHz（48kHz 更佳）、playback 48kHz 立体声</td><td>16kHz 是主流 ASR/omni 模型输入下限</td></tr>
+<tr><td>供电</td><td>USB bus-powered ≤500mA，或自带电池</td><td>挂在已有的独立供电 hub 上，不与 Astra 抢电</td></tr>
+<tr><td>形态参考</td><td>会议全向麦（EMEET / Anker PowerConf / Jabra Speak 同类，百元级国产亦可）</td><td>一体机集成 mic 阵列+AEC+功放喇叭，一根线解决双工</td></tr>
+</table>
+
+<h2>3. 系统架构<small>Architecture: raw audio duplex + offline wake fallback</small></h2>
+<figure>
+<svg viewBox="0 0 900 430" role="img" aria-label="audio architecture">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--muted)"/></marker>
+  </defs>
+  <!-- speakerphone -->
+  <rect x="20" y="60" width="190" height="120" rx="10" fill="none" stroke="var(--accent)" stroke-width="2"/>
+  <text x="115" y="85" text-anchor="middle" font-size="14" font-weight="bold" fill="var(--fg)">USB 全向麦音箱</text>
+  <text x="115" y="104" text-anchor="middle" font-size="11" fill="var(--muted)">UAC 免驱 · 硬件AEC</text>
+  <text x="115" y="130" text-anchor="middle" font-size="12" fill="var(--fg)">🎤 mic 阵列 (360°)</text>
+  <text x="115" y="152" text-anchor="middle" font-size="12" fill="var(--fg)">🔊 speaker + 功放</text>
+  <!-- alsa -->
+  <rect x="280" y="60" width="150" height="120" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="355" y="90" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--fg)">ALSA (card N)</text>
+  <text x="355" y="115" text-anchor="middle" font-size="12" fill="var(--fg)">arecord 16k/48k</text>
+  <text x="355" y="137" text-anchor="middle" font-size="12" fill="var(--fg)">aplay / mpg123</text>
+  <text x="355" y="159" text-anchor="middle" font-size="11" fill="var(--muted)">asound.conf 固定 by-id</text>
+  <!-- ros node -->
+  <rect x="500" y="60" width="170" height="120" rx="10" fill="none" stroke="var(--ok)" stroke-width="2"/>
+  <text x="585" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--fg)">audio_io 节点</text>
+  <text x="585" y="110" text-anchor="middle" font-size="11" fill="var(--muted)">ROS2 · systemd 常驻</text>
+  <text x="585" y="133" text-anchor="middle" font-size="12" fill="var(--fg)">/audio/mic (chunk)</text>
+  <text x="585" y="155" text-anchor="middle" font-size="12" fill="var(--fg)">/audio/play (queue)</text>
+  <!-- llm -->
+  <rect x="720" y="40" width="160" height="160" rx="10" fill="none" stroke="var(--warn)" stroke-width="2"/>
+  <text x="800" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--fg)">全模态大模型</text>
+  <text x="800" y="90" text-anchor="middle" font-size="11" fill="var(--muted)">omni-modal LLM</text>
+  <text x="800" y="115" text-anchor="middle" font-size="12" fill="var(--fg)">云端 realtime API</text>
+  <text x="800" y="137" text-anchor="middle" font-size="12" fill="var(--fg)">或本地 ASR+LLM+TTS</text>
+  <text x="800" y="165" text-anchor="middle" font-size="12" fill="var(--fg)">→ /cmd_vel /nav goal</text>
+  <text x="800" y="185" text-anchor="middle" font-size="12" fill="var(--fg)">→ TTS 音频流</text>
+  <!-- arrows main path -->
+  <line x1="210" y1="100" x2="278" y2="100" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="278" y1="145" x2="210" y2="145" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="430" y1="100" x2="498" y2="100" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="498" y1="145" x2="430" y2="145" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="670" y1="100" x2="718" y2="100" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="718" y1="145" x2="670" y2="145" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="450" y="40" text-anchor="middle" font-size="11" fill="var(--muted)">──── 主通道：原始音频双工 raw audio duplex ────</text>
+  <!-- CI1302 fallback path -->
+  <rect x="20" y="280" width="190" height="110" rx="10" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="115" y="306" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--fg)">CI1302 语音模块</text>
+  <text x="115" y="328" text-anchor="middle" font-size="11" fill="var(--muted)">离线 · 不依赖网络</text>
+  <text x="115" y="350" text-anchor="middle" font-size="12" fill="var(--fg)">唤醒词 "你好小亚"</text>
+  <text x="115" y="372" text-anchor="middle" font-size="12" fill="var(--fg)">固定命令词 ≤300</text>
+  <rect x="280" y="292" width="150" height="86" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="355" y="320" text-anchor="middle" font-size="12" font-weight="bold" fill="var(--fg)">串口 / IIC</text>
+  <text x="355" y="342" text-anchor="middle" font-size="11" fill="var(--muted)">5字节协议帧</text>
+  <text x="355" y="362" text-anchor="middle" font-size="11" fill="var(--muted)">AA FF type id FB</text>
+  <line x1="210" y1="335" x2="278" y2="335" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M430,335 C480,335 540,260 570,185" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arr)"/>
+  <text x="560" y="290" font-size="11" fill="var(--muted)">唤醒帧 → 触发大模型会话</text>
+  <text x="450" y="415" text-anchor="middle" font-size="11" fill="var(--muted)">‑ ‑ ‑ 辅通道：离线唤醒/应急命令（断网可用） offline wake &amp; fallback ‑ ‑ ‑</text>
+</svg>
+<figcaption>主通道走 USB 全向麦音箱的原始音频双工；CI1302 退居离线唤醒/应急命令辅通道</figcaption>
+</figure>
+
+<h2>4. 集成步骤<small>Integration steps once hardware arrives</small></h2>
+<pre># 1) 插上后确认枚举为 USB 声卡（假设 card 1）
+aplay -l ; arecord -l ; ls /dev/snd/by-id/
+
+# 2) 固定为默认设备（按 by-id 而非卡号，防重枚举漂移）
+cat &gt; /etc/asound.conf &lt;&lt;'EOF'
+defaults.pcm.card 1
+defaults.ctl.card 1
+EOF
+
+# 3) 输出验收：放一个 mp3（用户最初的验收标准）
+apt install -y mpg123 &amp;&amp; mpg123 test.mp3
+
+# 4) 输入验收：录 5 秒回放，人耳检查底噪/增益
+arecord -f S16_LE -r 16000 -c 1 -d 5 /tmp/t.wav &amp;&amp; aplay /tmp/t.wav
+
+# 5) AEC 验收：aplay 播音乐的同时 arecord，录音里音乐残留应明显衰减
+
+# 6) audio_io ROS2 节点 + systemd（仿 astra-cam.service 模板：
+#    Restart=on-failure + 无声看门狗自杀重启，恢复热插拔）</pre>
+
+<h2>5. 带宽 / 供电 / 风险<small>Bandwidth, power, risks</small></h2>
+<table>
+<tr><th>项</th><th>评估</th></tr>
+<tr><td>USB2 带宽</td><td class="ok">48kHz 16bit 立体声双工 ≈ 3 Mbps，相对 Astra 深度流（~18MB/s 上限的总线）可忽略；音频是 isochronous 有保留带宽，不会被深度流饿死</td></tr>
+<tr><td>供电</td><td class="mid">挂独立供电 hub（Astra 同款做法）；bus-powered 全向麦典型 200–400mA，别直插板载口与相机抢 500mA 预算</td></tr>
+<tr><td>自听回声</td><td class="mid">硬件 AEC 是选型硬指标；若买到无 AEC 型号，需在板上跑 speexdsp/webrtc-aec，8 核 A55 可承受但增加延迟</td></tr>
+<tr><td>重枚举</td><td class="mid">与雷达同款风险：audio_io 节点做无声看门狗（N 秒无帧 exit → systemd 重启），asound 按 by-id 绑定</td></tr>
+<tr><td>行驶底噪</td><td class="mid">电机/麦轮噪声进 mic；先静止对话验收，行驶中对话效果实测后再调（降噪档位/VAD 阈值）</td></tr>
+<tr><td>隐私</td><td class="mid">常开麦上云需明确开关（GUI 总闸），默认唤醒后才推流</td></tr>
+</table>
+
+<h2>6. 验收清单<small>Acceptance checklist</small></h2>
+<table>
+<tr><th>#</th><th>项目</th><th>标准</th></tr>
+<tr><td>1</td><td>免驱枚举</td><td>插入 ≤5s 内 <code>aplay -l</code>/<code>arecord -l</code> 同时出现 playback+capture</td></tr>
+<tr><td>2</td><td>mp3 播放</td><td><code>mpg123</code> 播任意音乐 mp3，音量可用 <code>amixer</code> 调</td></tr>
+<tr><td>3</td><td>拾音</td><td>2m 距离正常语速录音，人耳清晰、无爆音</td></tr>
+<tr><td>4</td><td>AEC</td><td>播 TTS 同时说话，录音中 TTS 残留不影响 ASR</td></tr>
+<tr><td>5</td><td>长稳</td><td>audio_io 常驻 24h 无掉流；拔插 USB 自动恢复</td></tr>
+<tr><td>6</td><td>端到端</td><td>说话 → 大模型 → TTS 回放，静止环境往返延迟可接受（云 realtime 目标 &lt;2s）</td></tr>
+</table>
+
+<p style="color:var(--muted);font-size:.85em;margin-top:40px">2026-07-18 · RDK-experience · 依据 docs/temp/ai音频 亚博资料 + 板上实测（CI1302 无音频通路、ES8326 空置、USB 占用现状）</p>
+
+</body>
+</html>
