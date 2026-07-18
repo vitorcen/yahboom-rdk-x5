@@ -46,11 +46,11 @@ MW, MH = 640, 352              # stereonet model input per eye
 COLOR_HZ = 12
 COMBINE_HZ = 15                # feed rate for the BPU (model ceiling ~27)
 OUT_W = 544                    # color preview width
-PAIR_MAX_DT = 0.0085           # s; half a 60fps frame — a near pair always exists
 JPEG_Q = 80
-SHM = ['/dev/shm/stereo_cam0.nv12', '/dev/shm/stereo_cam1.nv12']
 CAPTURE = ['/home/sunrise/nav_config/stereo_capture', '-s', '4', '-s', '5', '-f', '60']
 CALIB_CACHE = '/home/sunrise/nav_config/stereo_calib.bin'
+MAPS_BIN = '/home/sunrise/nav_config/rect_maps.bin'
+COMBINE_NODE = '/home/sunrise/nav_config/stereo_combine_node'
 BACKEND = os.environ.get('DEPTH_BACKEND', 'stereonet')
 STEREONET_MODEL = '/opt/tros/humble/share/hobot_stereonet/config/DStereoV2.4_int8.bin'
 
@@ -152,35 +152,74 @@ def build_maps(K1, D1, K2, D2, R, T):
         baseline=baseline, doffs=doffs)
 
 
-_WB = {'n': 0, 'g': [1.0, 1.0, 1.0]}
+def export_maps(m1, m1uv, m2, m2uv):
+    """Dump float32 maps for the C++ stereo_combine node (RMAP1 format)."""
+    with open(MAPS_BIN, 'wb') as f:
+        f.write(b'RMAP1')
+        f.write(struct.pack('<2I', MW, MH))
+        for arr in (m1[0], m1[1], m1uv[0], m1uv[1], m2[0], m2[1], m2uv[0], m2uv[1]):
+            f.write(np.ascontiguousarray(arr, np.float32).tobytes())
 
 
-def gray_world_wb(bgr):
-    # EMA-smoothed, clamped gray-world (raw gray-world over-corrects when a
-    # large colored object enters); convertScaleAbs is ~10x cheaper than floats.
-    if _WB['n'] % 10 == 0:
-        m = [float(bgr[:, :, i].mean()) + 1e-6 for i in range(3)]
-        k = sum(m) / 3.0
-        for i in range(3):
-            target = min(max(k / m[i], 0.6), 1.8)
-            _WB['g'][i] += 0.2 * (target - _WB['g'][i])
-    _WB['n'] += 1
-    ch = [cv2.convertScaleAbs(bgr[:, :, i], alpha=_WB['g'][i]) for i in range(3)]
-    return cv2.merge(ch)
+_CHROMA = {'rb': None, 'cnt': None, 'up': None, 'vp': None}
+_CHROMA_BINS = 24
+_CHROMA_SAT = 1.6
 
 
-def read_shm(path):
-    """Return (nv12 view (H*3/2 rows x W), ts_seconds) or None."""
+def chroma_fix(uv, ow, oh):
+    """De-contaminate NV12 chroma in place of white balance.
+
+    No IR-cut filter on this module: indoor NIR floods R/B, showing up as a
+    big additive chroma pedestal with a radial (lens shading) component.
+    Subtract the per-radius mean U/V profile (EMA-smoothed), then boost the
+    surviving chroma. Localized real colors survive; the veil does not.
+    """
+    c = _CHROMA
+    u = uv[:, 0::2].astype(np.float32) - 128.0
+    v = uv[:, 1::2].astype(np.float32) - 128.0
+    if c['rb'] is None or c['rb'].shape != u.shape:
+        h, w = u.shape
+        yy, xx = np.mgrid[0:h, 0:w]
+        rad = np.sqrt((yy - h / 2) ** 2 + (xx - w / 2) ** 2)
+        c['rb'] = np.minimum((rad / rad.max() * _CHROMA_BINS).astype(np.int32),
+                             _CHROMA_BINS - 1)
+        c['cnt'] = np.bincount(c['rb'].ravel(), minlength=_CHROMA_BINS)
+        c['up'] = c['vp'] = None
+    flat = c['rb'].ravel()
+    k = np.ones(3) / 3.0
+    up = np.convolve(np.bincount(flat, u.ravel(), _CHROMA_BINS) / c['cnt'], k, 'same')
+    vp = np.convolve(np.bincount(flat, v.ravel(), _CHROMA_BINS) / c['cnt'], k, 'same')
+    if c['up'] is None:
+        c['up'], c['vp'] = up, vp
+    else:
+        c['up'] += 0.3 * (up - c['up'])
+        c['vp'] += 0.3 * (vp - c['vp'])
+    u = (u - c['up'][c['rb']]) * _CHROMA_SAT
+    v = (v - c['vp'][c['rb']]) * _CHROMA_SAT
+    out = np.empty_like(uv)
+    out[:, 0::2] = np.clip(u + 128.0, 0, 255).astype(np.uint8)
+    out[:, 1::2] = np.clip(v + 128.0, 0, 255).astype(np.uint8)
+    return out
+
+
+PAIR_PATH = '/dev/shm/stereo_pair.shm'
+FRAME_BYTES = W * H * 3 // 2
+
+
+def read_pair():
+    """Read stereo_capture's seqlocked pair file (rescue paths only; the C++
+    node maps it directly). Returns (nv0, nv1, ts_seconds) or None."""
     try:
-        buf = open(path, 'rb').read()
-        if len(buf) < 32 or buf[:4] != b'STER':
+        buf = open(PAIR_PATH, 'rb').read()
+        if len(buf) < 64 + 2 * FRAME_BYTES or buf[:4] != b'STPR':
             return None
-        w, h, st = struct.unpack('<3I', buf[4:16])
-        ts, = struct.unpack('<Q', buf[20:28])
-        if (w, h) != (W, H) or len(buf) < 32 + st * h * 3 // 2:
+        seq, = struct.unpack('<I', buf[4:8])
+        if seq == 0 or seq & 1:                 # unwritten / torn
             return None
-        nv = np.frombuffer(buf, np.uint8, st * h * 3 // 2, 32).reshape(h * 3 // 2, st)[:, :w]
-        return nv, ts / 1e9
+        ts0, ts1 = struct.unpack('<2Q', buf[16:32])
+        nv0 = np.frombuffer(buf, np.uint8, FRAME_BYTES, 64).reshape(H * 3 // 2, W)
+        nv1 = np.frombuffer(buf, np.uint8, FRAME_BYTES, 64 + FRAME_BYTES).reshape(H * 3 // 2, W)
+        return nv0, nv1, max(ts0, ts1) / 1e9
     except OSError:
         return None
 
@@ -207,16 +246,27 @@ class StereoCam(Node):
         self.out_size = (OUT_W, int(H * OUT_W / W))
         self.running = True
         self.last_stamp = 0.0
-        threading.Thread(target=self.loop, args=(self.tick_color, COLOR_HZ), daemon=True).start()
+        # Hot paths live in the C++ stereo_combine node when its binary exists
+        # (python color+combine threads share one GIL and cap around 11 it/s
+        # total). Python keeps calib, process supervision and the SGBM rescue.
+        self.use_cpp = (BACKEND == 'stereonet' and os.path.exists(COMBINE_NODE)
+                        and os.environ.get('COMBINE_BACKEND', 'cpp') == 'cpp')
+        if not self.use_cpp:
+            threading.Thread(target=self.loop, args=(self.tick_color, COLOR_HZ), daemon=True).start()
 
         if BACKEND == 'stereonet':
-            self.pub_combine = self.create_publisher(Image, '/image_combine_raw', 2)
             self.snet = self.spawn_stereonet()
             # visual (1.35MB bgr8) must NOT flow through rclpy: python-side CDR
             # deserialization hogs the GIL for ~800ms/frame and stalls our own
             # publish. hobot_codec (C++, HW JPEG) bridges it to the GUI topic.
             self.codec = self.spawn_codec()
-            threading.Thread(target=self.loop, args=(self.tick_combine, COMBINE_HZ), daemon=True).start()
+            if self.use_cpp:
+                export_maps(self.m1, self.m1uv, self.m2, self.m2uv)
+                self.combine = self.spawn_combine()
+                self.codec_color = self.spawn_codec_color()
+            else:
+                self.pub_combine = self.create_publisher(Image, '/image_combine_raw', 2)
+                threading.Thread(target=self.loop, args=(self.tick_combine, COMBINE_HZ), daemon=True).start()
         else:                                   # DEPTH_BACKEND=sgbm rescue path
             self.sgbm = cv2.StereoSGBM_create(
                 minDisparity=0, numDisparities=64, blockSize=5,
@@ -235,10 +285,16 @@ class StereoCam(Node):
                f'camera_cx:={i["cx"]:.4f}', f'camera_cy:={i["cy"]:.4f}',
                f'baseline:={i["baseline"]:.5f}', f'doffs:={i["doffs"]:.4f}',
                'publish_pcd_enabled:=False', 'publish_origin_enable:=False',
-               'log_level:=warn']
+               'infer_thread_num:=4', 'log_level:=warn']
         p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=dict(os.environ))
         self.get_logger().info(f'stereonet spawned pid={p.pid}')
+        return p
+
+    def spawn_combine(self):
+        # sparse logs (10s stats) -> let them flow to the journal
+        p = subprocess.Popen([COMBINE_NODE], env=dict(os.environ))
+        self.get_logger().info(f'stereo_combine spawned pid={p.pid}')
         return p
 
     def spawn_codec(self):
@@ -250,6 +306,20 @@ class StereoCam(Node):
         p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=dict(os.environ))
         self.get_logger().info(f'hobot_codec spawned pid={p.pid}')
+        return p
+
+    def spawn_codec_color(self):
+        # second VPU JENC channel: color NV12 -> /image_jpeg. Software imencode
+        # in the combine node was ~30ms/frame of CPU stolen from the depth chain.
+        cmd = ['ros2', 'launch', 'hobot_codec', 'hobot_codec_encode.launch.py',
+               'codec_channel:=2', 'codec_in_mode:=ros', 'codec_out_mode:=ros',
+               'codec_sub_topic:=/image_color_nv12',
+               'codec_in_format:=nv12', 'codec_out_format:=jpeg',
+               'codec_jpg_quality:=80.0',
+               'codec_pub_topic:=/image_jpeg', 'log_level:=warn']
+        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=dict(os.environ))
+        self.get_logger().info(f'hobot_codec(color) spawned pid={p.pid}')
         return p
 
     def loop(self, fn, hz):
@@ -264,15 +334,15 @@ class StereoCam(Node):
 
     # --- color: reference eye, per-plane downscale then convert ---
     def tick_color(self):
-        r = read_shm(SHM[0])
+        r = read_pair()
         if not r:
             return
-        nv12, _ = r
+        nv12 = r[0]
         ow, oh = self.out_size
         y = cv2.resize(nv12[:H], (ow, oh), interpolation=cv2.INTER_AREA)
         uv = cv2.resize(nv12[H:], (ow, oh // 2), interpolation=cv2.INTER_AREA)
+        uv = chroma_fix(uv, ow, oh)
         bgr = cv2.cvtColor(np.vstack([y, uv]), cv2.COLOR_YUV2BGR_NV12)
-        bgr = gray_world_wb(bgr)
         self.pub_jpeg(self.pub_color, bgr, 'sc132gs_color')
 
     # --- combine: per-plane rectified pair for the BPU ---
@@ -283,31 +353,24 @@ class StereoCam(Node):
         return y, uv.reshape(MH // 2, MW)
 
     def tick_combine(self):
-        # Eyes free-run at 60fps with a fixed phase offset; a pair closer than
-        # half a frame (8.3ms) ALWAYS exists, but the newest-vs-newest snapshot
-        # may sit at the far phase. Poll a few ms until the near pair slides in.
-        a = b = None
-        for _ in range(6):
-            a = read_shm(SHM[0])
-            b = read_shm(SHM[1])
-            if a and b and abs(a[1] - b[1]) <= PAIR_MAX_DT:
-                break
-            time.sleep(0.003)
+        # Pairing now happens inside stereo_capture (seqlocked pair file);
+        # here we just skip when there's nothing newer than last publish.
+        r = read_pair()
         st = getattr(self, '_cstat', None)
         if st is None:
             st = self._cstat = {'try': 0, 'ok': 0, 't': time.time(), 'el': 0.0}
         st['try'] += 1
-        if not a or not b or abs(a[1] - b[1]) > PAIR_MAX_DT:
+        if not r or r[2] <= self.last_stamp:
             if time.time() - st['t'] > 5:
                 self.get_logger().info(f"combine stat: try={st['try']} ok={st['ok']} last_el={st['el']*1e3:.0f}ms")
                 st['t'] = time.time(); st['try'] = st['ok'] = 0
             return
         _t0 = time.time()
-        yl, uvl = self.rect_eye(a[0], self.m1, self.m1uv)
-        yr, uvr = self.rect_eye(b[0], self.m2, self.m2uv)
+        yl, uvl = self.rect_eye(r[0], self.m1, self.m1uv)
+        yr, uvr = self.rect_eye(r[1], self.m2, self.m2uv)
         _t1 = time.time()
         msg = Image()
-        stamp = max(a[1], b[1])
+        stamp = r[2]
         if stamp <= self.last_stamp:            # stereonet drops non-increasing
             stamp = self.last_stamp + 1e-4
         self.last_stamp = stamp
@@ -339,12 +402,11 @@ class StereoCam(Node):
 
     # --- rescue: CPU SGBM (DEPTH_BACKEND=sgbm) ---
     def tick_sgbm(self):
-        a = read_shm(SHM[0])
-        b = read_shm(SHM[1])
-        if not a or not b or abs(a[1] - b[1]) > 0.06:
+        r = read_pair()
+        if not r:
             return
-        yl, _ = self.rect_eye(a[0], self.m1, self.m1uv)
-        yr, _ = self.rect_eye(b[0], self.m2, self.m2uv)
+        yl, _ = self.rect_eye(r[0], self.m1, self.m1uv)
+        yr, _ = self.rect_eye(r[1], self.m2, self.m2uv)
         disp = self.sgbm.compute(yl, yr).astype(np.float32) / 16.0
         dv = np.clip(disp / 64 * 255, 0, 255).astype(np.uint8)
         color = cv2.applyColorMap(dv, cv2.COLORMAP_JET)
@@ -364,6 +426,12 @@ class StereoCam(Node):
             if self.codec.poll() is not None:
                 self.get_logger().warn('hobot_codec died, respawning')
                 self.codec = self.spawn_codec()
+            if self.use_cpp and self.combine.poll() is not None:
+                self.get_logger().warn('stereo_combine died, respawning')
+                self.combine = self.spawn_combine()
+            if self.use_cpp and self.codec_color.poll() is not None:
+                self.get_logger().warn('hobot_codec(color) died, respawning')
+                self.codec_color = self.spawn_codec_color()
 
     _FPS = {}
 
@@ -394,7 +462,8 @@ class StereoCam(Node):
 
     def destroy_node(self):
         self.running = False
-        for p in (getattr(self, 'codec', None), getattr(self, 'snet', None), self.cap):
+        for p in (getattr(self, 'combine', None), getattr(self, 'codec_color', None),
+                  getattr(self, 'codec', None), getattr(self, 'snet', None), self.cap):
             try:
                 p.terminate()
                 p.wait(timeout=5)

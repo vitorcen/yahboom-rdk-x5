@@ -124,7 +124,42 @@ metadata:
   另 UDP buffer 已提 16MB(/etc/sysctl.d/99-ros2-bigmsg.conf,当时嫌疑后排除,留着无害)。
 - 实验残留双份 stereonet 会吃满 CPU——排障时注意 pgrep 清场。GUI 两窗左上角有绿色 fps 角标
   (发布端滑窗自算);深度窗另有 stereonet 官方 overlay(FPS/Latency/CPU/BPU)。
-- `DEPTH_BACKEND=sgbm` 环境变量回退 CPU SGBM。待办:#12 C/零拷贝冲 27fps、#13 已知距离精度验证。
+- `DEPTH_BACKEND=sgbm` 环境变量回退 CPU SGBM。待办:#13 已知距离精度验证。
+
+**阶段B C++/零拷贝完成(2026-07-18,#12):GUI 深度 5.4→16.8fps,彩色 3.4→10.1fps(唯一载荷计数)。**
+- 三层根因逐个击破:①python 单进程 color+combine 双线程**共抢 GIL 合计上限 ~11 it/s**——热路径
+  全部下沉 C++ 节点 `stereo_combine_pkg`(colcon/ament,产物 `stereo_combine_node`,fixed-point
+  CV_16SC2 remap 直写 msg 缓冲);②消费端轮询配对全量读 2MB 文件烧 tmpfs 带宽(144% CPU 才 6fps);
+  ③致命前提崩塌:系统负载下**两眼各自独立丢帧 ~13%**,"半帧内近对必存在"死掉(实测 dt p50=12ms
+  超 8.5ms 门限)→ **配对下沉到 stereo_capture 守护**(两眼数据都在它手里):每眼 staging,后到者
+  查对方 ts,±8.5ms 内 seqlock 写单一 `/dev/shm/stereo_pair.shm`(64B 头 seq 奇偶锁 + 双 NV12,
+  mmap 零 syscall,PAIR_HZ 默认 30)。消费端(C++/python fallback 统一)mmap 快照,零轮询零配对。
+- `infer_thread_num:=4`(默认 2)推理流水线加深:BPU 24%→63%,吞吐显著抬升。CPU 已顶格 1.5GHz
+  无超频档;stereonet 推理是当前瓶颈,官方 27fps 是裸推理(无 visual 渲染)口径,GUI 要看图不关。
+- 测量陷阱:`ros2 topic hz` 订阅 1.35MB 大图时 python 反序列化跟不上会**漏计**(visual 假 8.3);
+  stereonet 自绘 FPS 角标口径不明(报 4.7 时唯一 jpeg 实测 16.8)——**以唯一载荷 md5 计数为准**。
+  另 python 闲置 publisher 会让 `ros2 topic info` 显示双发布者,别误判。
+- 文件:`stereo_combine_pkg/`(package.xml+CMakeLists+src)、`build_stereo_combine.sh`(板上
+  colcon,产物拷 `stereo_combine_node`,**Text file busy 需先 stop 服务**);stereo_cam.py 退居
+  监督者(标定/导出 rect_maps.bin RMAP1 格式/拉起看护 5 进程),`COMBINE_BACKEND=py` 回退 python。
+- **彩色终局=事件驱动+硬件 JENC**:软 imencode(~30ms/帧)是抢深度 CPU 的元凶(彩色放开 20 深度
+  16.8→13.7)。改 NV12 直发第二个 hobot_codec 实例(`codec_channel:=2`,`/image_color_nv12`→
+  `/image_jpeg`,fps 角标画在 Y 平面白字),`COLOR_HZ=0` 默认事件驱动跟配对率。终态:**彩色 19.8 /
+  深度 ~14-17fps**。60fps 彩色被否:前处理 16ms/帧×60 吃满一核、深度再掉 3-5,GUI 渲染 30Hz 收益为零。
+
+**彩色偏粉终审(2026-07-18,#14 结案):物理限制,非配置 bug。**
+- 取证链:pre-ISP RAW 2×2 相位统计(`STEREO_TAP=vin`)证实**彩色 BGGR Bayer**(绿对角 64.7/64.7
+  相等、蓝位 48.8、红位 60.7);tuning json(`calib_lname`)实际已加载(AWB PCA/CCM/DMSC 齐全)。
+- 根因:**模组无 IR-cut 滤光片**(NIR 850/940nm 增强是卖点)。室内灯近红外灌爆 R/B → 品红加性
+  污染+径向 shading;`logcat`(板上有)见 AWB 永远 "can not calculate right color temperature"
+  (白点在自然光轨迹外)→ 色温=0 → CCM 不套用。**任何矩阵不可逆,真修复只有硬件加 650nm IR-cut**。
+- 软件上限已落地:①`stereo_capture.c` `freeze_isp_wb()`(启动 3s 后锁手动 WB,优先级:标定表
+  gain_by_temper(此模组表为空)→`ISP_WB_GAINS="r,b"`→冻结 auto 当前值;`ISP_WB_TEMPER=0` 关);
+  ②`stereo_cam.py` `chroma_fix()`:半分辨率 UV 按径向环带(24 bins,np.bincount)扣色度基底
+  +1.6× 饱和,EMA 0.3 防闪。局部真实色存活,大面积表面必然被中和(均值扣除数学性质)。
+- 弯路记录:CCM/HSV/钳位空间扣除/灰世界增益全试过——乘性增益修不了加性污染;纯净图可改发 Y 灰度。
+- 教训:hbn_isp_api(libvpf)的 `hbn_isp_set_awb_attr` 需在出流后调用(启动即调返回 -65545/零增益);
+  `pkill -f` 的模式若出现在远程 bash -c 命令串里照样自杀,杀进程用 pid 或确保串内无该字样。
 
 **Why:** 记录硬件换代事实(IMX219→双目 SC132GS)+ 两 CSI 已验证地址/ID/出图,避免下次重新摸索;
 [[rdk-x5-robot-status]] 里"相机进展(IMX219 CSI0=i2c-6 0x10)"一节已过时,以本条为准。

@@ -140,12 +140,31 @@ li{margin:4px 0}
 </ul>
 <p class="small">兜底:CPU SGBM 链路始终可用;BPU 通了之后深度话题契约不变(<code>/camera/depth/color_jpeg</code>),GUI 仍零改动。</p>
 
+<h2>6.4 · 阶段B:C++ 热路径 + 源头配对 <span class="en">/ Stage B: C++ hot path &amp; pair-at-source (5.4→16.8fps)</span></h2>
+<ul>
+<li><b>三层瓶颈逐个击破</b>:① python 单进程 color+combine 双线程共抢 GIL,合计上限 ~11 it/s;② 消费端轮询配对每次全量读 2MB×2 烧 tmpfs 带宽(144% CPU 只换来 6fps);③ 最致命——系统负载下<b>两眼各自独立丢帧 ~13%</b>,"半帧内近对必存在"的前提崩塌(实测配对 dt p50=12ms &gt; 8.5ms 门限)。</li>
+<li><b>正确的数据结构</b>:配对下沉到 <code>stereo_capture</code>(两眼数据都在它手里)。每眼 staging 最新帧,后到者查对方时间戳,±8.5ms 内即 <b>seqlock</b>(序号奇偶锁)写单一 <code>/dev/shm/stereo_pair.shm</code>(64B 头 + 双 NV12,mmap 零 syscall,<code>PAIR_HZ</code> 默认 30)。消费端 mmap 快照,零轮询、零配对逻辑。</li>
+<li><b>C++ 节点 <code>stereo_combine_pkg</code></b> 接管 remap(fixed-point CV_16SC2 直写 msg 缓冲)+ 彩色(缩放/径向 chroma/JPEG);<code>stereo_cam.py</code> 退居监督者(EEPROM 标定 → 导出 <code>rect_maps.bin</code>,拉起看护 capture/stereonet/codec/combine 四进程;<code>COMBINE_BACKEND=py</code> 回退)。</li>
+<li><b><code>infer_thread_num:=4</code></b>(默认 2)加深推理流水线:BPU 24%→63%。实测(唯一载荷 md5 计数):<b>深度 16.8fps、彩色 10.1fps</b>,进入官方 15-27 区间;当前瓶颈是 stereonet 推理本身(27fps 为无渲染裸推理口径)。</li>
+<li><b>测量陷阱</b>:<code>ros2 topic hz</code> 订阅 1.35MB 大图会因 python 反序列化跟不上而漏计;stereonet 自绘 FPS 角标口径不可信——以唯一 JPEG 载荷计数为准。</li>
+</ul>
+
+<h2>6.5 · 彩色偏粉的真相 <span class="en">/ Why color is never "full color": no IR-cut filter</span></h2>
+<ul>
+<li><b>取证</b>:抓 pre-ISP RAW(<code>STEREO_TAP=vin</code>)做 2×2 相位统计——绿对角相等(64.7/64.7)、蓝位低(48.8)、红位高(60.7),<b>确认是彩色 BGGR Bayer 传感器</b>,不是黑白。</li>
+<li><b>根因</b>:模组无 IR-cut 滤光片(规格卖点即 850/940nm NIR 增强)。室内灯的近红外穿透 R/B 滤色层 → 整片品红加性污染,且带镜头径向 shading。这是传感器端光谱污染,<b>任何 CCM/WB 矩阵都不可逆</b>。</li>
+<li><b>3A 侧症状</b>:<code>logcat</code> 里 AWB 永远 "can not calculate right color temperature"(白点在自然光轨迹外)+ 无 OTP;色温=0 → CCM 不套用。<code>calib_lname</code> tuning json 实际已加载,不是没加载。</li>
+<li><b>已落地的软件上限</b>:① <code>stereo_capture</code> 启动 3s 后冻结手动 WB(<code>freeze_isp_wb</code>,默认锁 auto 当前值,可 <code>ISP_WB_GAINS="r,b"</code> 覆写,<code>ISP_WB_TEMPER=0</code> 恢复 auto),消除 AWB 漂移;② <code>stereo_cam.py</code> 的 <code>chroma_fix</code>:半分辨率 UV 平面按径向环带扣除 NIR 色度基底 + 1.6× 饱和。局部真实色(红物件/绿凳)存活,大面积表面被中和成米灰(均值扣除的数学必然)。</li>
+<li><b>真修复只有硬件</b>:加 650nm 短通 IR-cut 滤光片(牺牲夜视),或换带切换式 IR-cut 的模组。当前视觉效果对"态势感知窗口"够用;要纯净图可发 Y 通道灰度。</li>
+</ul>
+
 <h2>7 · 文件清单与运维 <span class="en">/ Files &amp; ops</span></h2>
 <table>
 <tr><th>文件(仓库 board/ 镜像)</th><th>作用</th></tr>
-<tr><td><code>home/sunrise/nav_config/stereo_capture.c</code></td><td>HBN 双路采集守护;<code>-s 4 -s 5</code> 两眼,<code>-f N</code> 覆写 LPWM,<code>STEREO_TAP=vin</code> 抓 RAW 调试</td></tr>
+<tr><td><code>home/sunrise/nav_config/stereo_capture.c</code></td><td>HBN 双路采集守护;源头配对 seqlock 写 <code>stereo_pair.shm</code>(<code>PAIR_HZ</code>);WB 冻结 <code>freeze_isp_wb</code>;<code>STEREO_TAP=vin</code> 抓 RAW 调试</td></tr>
 <tr><td><code>home/sunrise/nav_config/build_stereo_capture.sh</code></td><td>重刷机重建:生成左眼配置(addr 0x32)+ 注册 vp_sensors + 编译,幂等</td></tr>
-<tr><td><code>home/sunrise/nav_config/stereo_cam.py</code></td><td>ROS2 发布节点:EEPROM 标定→rectify/SGBM 深度 + 彩色;60fps 热打;daemon watchdog</td></tr>
+<tr><td><code>home/sunrise/nav_config/stereo_combine_pkg/</code></td><td>C++ 热路径节点(remap combine + 彩色 chroma/JPEG);<code>build_stereo_combine.sh</code> 板上 colcon 编译(先 stop 服务防 Text file busy)</td></tr>
+<tr><td><code>home/sunrise/nav_config/stereo_cam.py</code></td><td>监督节点:EEPROM 标定→导出 rect_maps.bin;拉起看护 4 进程;60fps 热打;<code>COMBINE_BACKEND=py</code>/<code>DEPTH_BACKEND=sgbm</code> 回退</td></tr>
 <tr><td><code>home/sunrise/nav_config/camera_autodetect.sh</code></td><td>开机探测插了什么相机(EEPROM "UNION" / USB Astra)</td></tr>
 <tr><td><code>etc/systemd/system/camera-preview.service</code></td><td>自启服务,取代 astra-cam.service</td></tr>
 </table>

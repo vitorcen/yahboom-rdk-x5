@@ -32,11 +32,31 @@
 #include <signal.h>
 #include <pthread.h>
 #include <getopt.h>
+#include <sys/mman.h>
+#include <time.h>
 
 #include "common_utils.h"
+#include "hbn_isp_api.h"
 
 #define MAX_SENSORS 2
-#define WRITE_EVERY 1           /* write every frame: readers pair by ts */
+
+/* Paired output: /dev/shm/stereo_pair.shm, seqlock-protected mmap.
+ *
+ * Per-eye files + consumer-side ts pairing collapsed under load: each eye
+ * drops ~13% of its 60fps writes independently, so the "a near pair always
+ * exists" assumption dies (measured dt p50=12ms > 8.5ms gate). This daemon
+ * sees BOTH streams, so it pairs at the source: each eye stages its newest
+ * frame; whichever eye lands second checks the other's ts and publishes the
+ * pair in one seqlocked write. Readers mmap once, copy, verify seq.
+ *
+ * Layout: 64B header | eye0 NV12 | eye1 NV12
+ *   header: "STPR"(4) | u32 seq (odd = write in progress) | u32 w | u32 h
+ *         | u64 ts0_ns | u64 ts1_ns | u32 fid0 | u32 fid1 | pad to 64
+ */
+#define PAIR_PATH   "/dev/shm/stereo_pair.shm"
+#define FRAME_BYTES (1088 * 1280 * 3 / 2)
+#define PAIR_HDR    64
+#define PAIR_MAX_DT_NS 8500000LL
 
 static volatile sig_atomic_t g_run = 1;
 static int g_tap_vin = 0;       /* STEREO_TAP=vin -> dump pre-ISP RAW instead */
@@ -143,8 +163,110 @@ static int create_and_run_vflow(pipe_contex_t *p) {
     return 0;
 }
 
-/* --- shm publishing --- */
+/* AWB auto never converges on this module (no OTP, "can not calculate right
+ * color temperature" forever) and keeps wandering, so downstream color
+ * correction chases a moving target. Freeze WB: prefer the tuning-table gains
+ * for ISP_WB_TEMPER (default 4500K; table is empty on GS130WI but harmless),
+ * else ISP_WB_GAINS="r,b", else lock whatever auto has settled on by now. */
+static void freeze_isp_wb(pipe_contex_t *p, int idx) {
+    uint32_t temper = 4500;
+    const char *e = getenv("ISP_WB_TEMPER");
+    if (e) temper = (uint32_t)atoi(e);
+    if (!temper) return;                    /* ISP_WB_TEMPER=0 keeps auto */
 
+    hbn_isp_awb_attr_t attr;
+    memset(&attr, 0, sizeof(attr));
+    if (hbn_isp_get_awb_attr(p->isp_node_handle, &attr) != 0) return;
+
+    hbn_isp_awb_gain_t g;
+    memset(&g, 0, sizeof(g));
+    hbn_isp_get_awb_gain_by_temper(p->isp_node_handle, temper, &g);
+    if (g.rgain <= 0.01f || g.bgain <= 0.01f) {
+        const char *gv = getenv("ISP_WB_GAINS");
+        float r = 0.0f, b = 0.0f;
+        if (gv && sscanf(gv, "%f,%f", &r, &b) == 2 && r > 0.01f && b > 0.01f) {
+            g.rgain = r; g.grgain = 1.0f; g.gbgain = 1.0f; g.bgain = b;
+        } else if (attr.auto_attr.gain.rgain > 0.01f) {
+            g = attr.auto_attr.gain;        /* freeze current auto estimate */
+        } else {
+            return;
+        }
+    }
+
+    attr.mode = HBN_ISP_MODE_MANUAL;
+    attr.manual_attr.gain = g;
+    attr.manual_attr.temper = temper;
+    int32_t ret = hbn_isp_set_awb_attr(p->isp_node_handle, &attr);
+    printf("eye%d: WB frozen r=%.3f gr=%.3f gb=%.3f b=%.3f (ret=%d)\n",
+           idx, g.rgain, g.grgain, g.gbgain, g.bgain, ret);
+}
+
+/* --- paired shm publishing --- */
+
+typedef struct {
+    uint8_t data[FRAME_BYTES];
+    uint64_t ts;                /* sensor timestamp, ns */
+    uint32_t fid;
+    int valid;
+} stage_t;
+
+static stage_t g_stage[MAX_SENSORS];
+static pthread_mutex_t g_pair_mtx = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t *g_pair_map = NULL;
+static uint64_t g_last_pair_ns = 0;
+static uint64_t g_pair_min_ns = 33333333;   /* PAIR_HZ=30 default */
+static uint32_t g_pairs = 0, g_frames = 0;  /* stats */
+
+static int pair_map_init(void) {
+    int fd = open(PAIR_PATH, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) return -1;
+    if (ftruncate(fd, PAIR_HDR + 2 * (off_t)FRAME_BYTES) != 0) { close(fd); return -1; }
+    g_pair_map = mmap(NULL, PAIR_HDR + 2 * (size_t)FRAME_BYTES,
+                      PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (g_pair_map == MAP_FAILED) { g_pair_map = NULL; return -1; }
+    memcpy(g_pair_map, "STPR", 4);
+    uint32_t w = 1088, h = 1280;
+    memcpy(g_pair_map + 8, &w, 4);
+    memcpy(g_pair_map + 12, &h, 4);
+    return 0;
+}
+
+/* caller holds g_pair_mtx */
+static void publish_pair(void) {
+    uint32_t *seq = (uint32_t *)(g_pair_map + 4);
+    __atomic_store_n(seq, *seq + 1, __ATOMIC_RELEASE);      /* odd: writing */
+    memcpy(g_pair_map + 16, &g_stage[0].ts, 8);
+    memcpy(g_pair_map + 24, &g_stage[1].ts, 8);
+    memcpy(g_pair_map + 32, &g_stage[0].fid, 4);
+    memcpy(g_pair_map + 36, &g_stage[1].fid, 4);
+    memcpy(g_pair_map + PAIR_HDR, g_stage[0].data, FRAME_BYTES);
+    memcpy(g_pair_map + PAIR_HDR + FRAME_BYTES, g_stage[1].data, FRAME_BYTES);
+    __atomic_store_n(seq, *seq + 1, __ATOMIC_RELEASE);      /* even: done */
+    g_pairs++;
+}
+
+static void stage_frame(int idx, hbn_vnode_image_t *img) {
+    if ((size_t)(img->buffer.size[0] + img->buffer.size[1]) > FRAME_BYTES)
+        return;                                             /* RAW tap etc. */
+    pthread_mutex_lock(&g_pair_mtx);
+    stage_t *s = &g_stage[idx], *o = &g_stage[1 - idx];
+    memcpy(s->data, img->buffer.virt_addr[0], img->buffer.size[0]);
+    memcpy(s->data + img->buffer.size[0], img->buffer.virt_addr[1], img->buffer.size[1]);
+    s->ts = (uint64_t)img->info.timestamps;
+    s->fid = img->info.frame_id;
+    s->valid = 1;
+    g_frames++;
+    int64_t dt = (int64_t)(s->ts - o->ts);
+    if (o->valid && llabs(dt) <= PAIR_MAX_DT_NS &&
+        s->ts - g_last_pair_ns >= g_pair_min_ns) {
+        publish_pair();
+        g_last_pair_ns = s->ts;
+    }
+    pthread_mutex_unlock(&g_pair_mtx);
+}
+
+/* legacy single-eye dump, kept for the STEREO_TAP=vin RAW debug path */
 static int write_shm_frame(int idx, hbn_vnode_image_t *img) {
     char tmp[64], dst[64];
     snprintf(tmp, sizeof(tmp), "/dev/shm/.stereo_cam%d.tmp", idx);
@@ -185,8 +307,11 @@ static void *eye_thread(void *argp) {
             usleep(100 * 1000);
             continue;
         }
-        if (n++ % WRITE_EVERY == 0)
+        (void)n;
+        if (g_tap_vin)
             write_shm_frame(a->idx, &img);
+        else
+            stage_frame(a->idx, &img);
         hbn_vnode_releaseframe(isp, 0, &img);
     }
     return NULL;
@@ -209,6 +334,14 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_sig);
     g_tap_vin = (getenv("STEREO_TAP") && !strcmp(getenv("STEREO_TAP"), "vin"));
     if (g_tap_vin) printf("tap=vin (RAW10 pre-ISP)\n");
+    if (getenv("PAIR_HZ")) {
+        int hz = atoi(getenv("PAIR_HZ"));
+        if (hz > 0) g_pair_min_ns = 1000000000ULL / hz;
+    }
+    if (!g_tap_vin && pair_map_init() != 0) {
+        printf("pair map init failed\n");
+        return 1;
+    }
     hb_mem_module_open();
 
     for (int i = 0; i < count; i++) {
@@ -241,7 +374,19 @@ int main(int argc, char **argv) {
         args[i].idx = i;
         pthread_create(&th[i], NULL, eye_thread, &args[i]);
     }
-    printf("stereo_capture running: /dev/shm/stereo_cam{0,1}.nv12 (~10fps each)\n");
+    printf("stereo_capture running: %s\n", g_tap_vin ? "/dev/shm/stereo_cam{0,1}.nv12 (RAW)" : PAIR_PATH);
+    if (!g_tap_vin) {
+        sleep(3);               /* frames flowing -> 3A attached, auto settled */
+        for (int i = 0; i < count; i++) freeze_isp_wb(&pipes[i], i);
+        while (g_run) {
+            sleep(10);
+            pthread_mutex_lock(&g_pair_mtx);
+            printf("pairs=%u frames=%u in 10s\n", g_pairs, g_frames);
+            fflush(stdout);
+            g_pairs = g_frames = 0;
+            pthread_mutex_unlock(&g_pair_mtx);
+        }
+    }
     for (int i = 0; i < count; i++) pthread_join(th[i], NULL);
 
     for (int i = 0; i < count; i++) {
