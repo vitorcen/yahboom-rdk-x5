@@ -1,0 +1,158 @@
+<meta charset="utf-8">
+<title>GS130WI 双目相机适配实录 · RDK X5</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a2e;--muted:#667;--card:#f6f7fb;--line:#dde;--accent:#2456c8;--ok:#188a42;--warn:#b8860b;--bad:#c0392b;--code:#eef1f8}
+@media (prefers-color-scheme:dark){:root{--bg:#101420;--fg:#dde3f0;--muted:#8a93a8;--card:#1a2030;--line:#2a3450;--accent:#6ea8ff;--ok:#4cc38a;--warn:#e0b25a;--bad:#e07060;--code:#182036}}
+:root[data-theme=dark]{--bg:#101420;--fg:#dde3f0;--muted:#8a93a8;--card:#1a2030;--line:#2a3450;--accent:#6ea8ff;--ok:#4cc38a;--warn:#e0b25a;--bad:#e07060;--code:#182036}
+:root[data-theme=light]{--bg:#fff;--fg:#1a1a2e;--muted:#667;--card:#f6f7fb;--line:#dde;--accent:#2456c8;--ok:#188a42;--warn:#b8860b;--bad:#c0392b;--code:#eef1f8}
+body{background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;max-width:980px;margin:0 auto;padding:24px 20px 80px}
+h1{font-size:26px;margin:8px 0 2px}h2{font-size:20px;margin:34px 0 10px;border-bottom:2px solid var(--line);padding-bottom:6px}h3{font-size:16px;margin:20px 0 8px}
+.en{color:var(--muted);font-size:13px}
+.tldr{background:var(--card);border-left:4px solid var(--accent);border-radius:8px;padding:14px 18px;margin:18px 0}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+th{background:var(--card)}
+code,pre{font-family:ui-monospace,Consolas,monospace;background:var(--code);border-radius:4px}
+code{padding:1px 5px;font-size:13px}
+pre{padding:12px 14px;overflow-x:auto;font-size:13px;line-height:1.5}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}
+.card{background:var(--card);border-radius:8px;padding:12px 16px;margin:12px 0}
+.svgwrap{overflow-x:auto;margin:14px 0}
+li{margin:4px 0}
+.small{font-size:13px;color:var(--muted)}
+</style>
+
+<h1>GS130WI 双目相机适配实录</h1>
+<div class="en">Bring-up log: Waveshare GS130WI stereo camera (dual SC132GS global shutter) on RDK X5 — 2026-07-18</div>
+
+<div class="tldr">
+<b>TL;DR</b> · 小车相机由单目 IMX219 换为微雪 <b>GS130WI 双目全局快门</b>(双 SC132GS,1.3MP,出厂标定内置 EEPROM,板载 ICM-42688 六轴 IMU)。一天内完成:两 CSI 电气验证 → EEPROM 标定解码(基线 69.7mm,免现场标定)→ HBN 双路采集守护 → SGBM 深度 + 彩色双话题进 GUI(前端零改动)→ <b>sensor 60fps 解锁</b>(一个寄存器关触发模式,流中热打)→ 官方 NPU(BPU)深度栈适配(进行中)。中途实战定位并修复一起<b>排线接触不良导致的 MIPI 物理层误码</b>。
+<div class="en">Swapped IMX219 for the GS130WI stereo pair; verified both CSI lanes, decoded the factory calibration EEPROM (69.7&nbsp;mm baseline), built an HBN dual-capture daemon + SGBM depth / color publishers (GUI untouched), unlocked 60&nbsp;fps free-run with a single register, and diagnosed a flaky FPC cable via MIPI <code>pkt_fatal</code> counters. BPU StereoNet integration in progress.</div>
+</div>
+
+<h2>1 · 硬件身份 <span class="en">/ Hardware identity</span></h2>
+<table>
+<tr><th>项</th><th>值</th><th>说明</th></tr>
+<tr><td>模组</td><td>微雪 RDK Stereo Camera <b>GS130WI</b></td><td>官方为 RDK X5 配套;"I" = 带 IMU 版</td></tr>
+<tr><td>Sensor ×2</td><td>思特威 <b>SC132GS</b>,1.3MP <b>全局快门</b> RAW10</td><td>芯片规格上限 120fps;竖装(1088×1280)</td></tr>
+<tr><td>右眼</td><td>i2c 地址 <code>0x30</code></td><td>chip-id reg <code>0x3107/08</code> = <code>0x0132</code></td></tr>
+<tr><td>左眼</td><td>i2c 地址 <code>0x32</code></td><td>两眼地址不同以便同总线共存</td></tr>
+<tr><td>标定 EEPROM</td><td><code>0x50</code>(随左眼排线)</td><td>头 5 字节 ASCII <code>"UNION"</code>,内含完整双目标定</td></tr>
+<tr><td>IMU</td><td>ICM-42688-P @ <code>0x68</code></td><td>六轴,尚未接入(将来 VIO 可用)</td></tr>
+<tr><td>CSI↔i2c 映射</td><td>vcon@0/1→i2c-6(CSI0),vcon@2/3→i2c-4(CSI1)</td><td>设备树 <code>/proc/device-tree/soc/cam/vcon@N</code></td></tr>
+<tr><td>MIPI</td><td>每眼 1 lane,mipiclk 1200Mbps</td><td>2lane 模式实测 PHY 全静默(疑似模组只布 1lane)</td></tr>
+</table>
+<p class="small">⚠ hobot 框架下相机 sensor 不走内核 sysfs probe(userspace 库直读 i2c),<code>i2cdetect</code> 的 <code>UU</code> 都不是相机;读芯片 ID 要用 16-bit 寄存器地址(<code>i2ctransfer w2@0x30 0x31 0x07 r1</code>)。</p>
+
+<h2>2 · 数据链路架构 <span class="en">/ Pipeline architecture</span></h2>
+<div class="svgwrap">
+<svg viewBox="0 0 940 400" width="940" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif" font-size="12">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6ea8ff"/></marker></defs>
+<style>.b{fill:none;stroke:#6ea8ff;stroke-width:1.4;rx:8}.t{fill:currentColor}.m{fill:#8a93a8;font-size:10px}.f{fill:#6ea8ff22;stroke:#6ea8ff;stroke-width:1.4}.g{fill:#4cc38a22;stroke:#4cc38a;stroke-width:1.4}.o{fill:#e0b25a22;stroke:#e0b25a;stroke-width:1.4}.ln{stroke:#6ea8ff;stroke-width:1.4;fill:none;marker-end:url(#ar)}</style>
+<!-- sensors -->
+<rect x="10" y="30" width="130" height="52" rx="8" class="f"/><text x="75" y="50" text-anchor="middle" class="t">右眼 SC132GS</text><text x="75" y="66" text-anchor="middle" class="m">0x30 · CSI1/i2c-4</text>
+<rect x="10" y="110" width="130" height="52" rx="8" class="f"/><text x="75" y="130" text-anchor="middle" class="t">左眼 SC132GS</text><text x="75" y="146" text-anchor="middle" class="m">0x32 · CSI0/i2c-6</text>
+<rect x="10" y="190" width="130" height="44" rx="8" class="o"/><text x="75" y="208" text-anchor="middle" class="t">EEPROM 0x50</text><text x="75" y="224" text-anchor="middle" class="m">UNION 出厂标定</text>
+<rect x="10" y="252" width="130" height="40" rx="8" class="o"/><text x="75" y="270" text-anchor="middle" class="t">LPWM 触发</text><text x="75" y="284" text-anchor="middle" class="m">30fps 模式用(现关)</text>
+<!-- HBN -->
+<rect x="200" y="60" width="150" height="110" rx="8" class="b"/><text x="275" y="82" text-anchor="middle" class="t">HBN 管线 ×2</text><text x="275" y="100" text-anchor="middle" class="m">MIPI RX → VIN →</text><text x="275" y="115" text-anchor="middle" class="m">ISP(3A/降噪)</text><text x="275" y="135" text-anchor="middle" class="m">NV12 1088×1280</text><text x="275" y="152" text-anchor="middle" class="m">60fps 自由跑</text>
+<!-- daemon -->
+<rect x="410" y="60" width="160" height="110" rx="8" class="g"/><text x="490" y="82" text-anchor="middle" class="t">stereo_capture (C)</text><text x="490" y="100" text-anchor="middle" class="m">每眼一线程 getframe</text><text x="490" y="116" text-anchor="middle" class="m">原子写 /dev/shm/</text><text x="490" y="131" text-anchor="middle" class="m">stereo_cam{0,1}.nv12</text><text x="490" y="149" text-anchor="middle" class="m">32B头: w/h/stride/fid/ts</text>
+<!-- python node -->
+<rect x="630" y="30" width="170" height="180" rx="8" class="g"/><text x="715" y="52" text-anchor="middle" class="t">stereo_cam.py</text>
+<text x="715" y="72" text-anchor="middle" class="m">① 启动读 EEPROM 标定</text>
+<text x="715" y="88" text-anchor="middle" class="m">② spawn daemon + 6s 后</text>
+<text x="715" y="102" text-anchor="middle" class="m">热打 60fps 序列</text>
+<text x="715" y="122" text-anchor="middle" class="m">彩色线程: NV12→缩→WB→JPEG</text>
+<text x="715" y="142" text-anchor="middle" class="m">深度线程: 双Y→rectify(0.4×)</text>
+<text x="715" y="157" text-anchor="middle" class="m">→SGBM(64视差)→JET</text>
+<text x="715" y="177" text-anchor="middle" class="m">帧配对: ts 差>60ms 弃</text>
+<text x="715" y="195" text-anchor="middle" class="m">watchdog 重生 daemon</text>
+<!-- GUI -->
+<rect x="630" y="250" width="170" height="90" rx="8" class="b"/><text x="715" y="272" text-anchor="middle" class="t">桌面 GUI(零改动)</text><text x="715" y="292" text-anchor="middle" class="m">右窗 #cambox ← /image_jpeg</text><text x="715" y="310" text-anchor="middle" class="m">左窗 #depthbox ←</text><text x="715" y="324" text-anchor="middle" class="m">/camera/depth/color_jpeg</text>
+<!-- autodetect -->
+<rect x="200" y="250" width="370" height="90" rx="8" class="o"/><text x="385" y="272" text-anchor="middle" class="t">camera-preview.service + camera_autodetect.sh</text><text x="385" y="292" text-anchor="middle" class="m">开机探测: EEPROM "UNION"(bus4/6 都扫,MCLK 无关最可靠)→ 双目</text><text x="385" y="308" text-anchor="middle" class="m">否则 USB 2bc5:0403 → Astra;都没有 → 待命</text><text x="385" y="326" text-anchor="middle" class="m">取代 astra-cam.service · 插什么用什么</text>
+<!-- arrows -->
+<path class="ln" d="M140 56 L200 90"/><path class="ln" d="M140 136 L200 140"/>
+<path class="ln" d="M350 115 L410 115"/><path class="ln" d="M570 115 L630 115"/>
+<path class="ln" d="M140 214 L620 100"/>
+<path class="ln" d="M715 210 L715 250"/>
+<path class="ln" d="M385 250 L385 220 L620 190" stroke-dasharray="4 3"/>
+<text x="470" y="108" text-anchor="middle" class="m">NV12×2</text>
+<text x="600" y="108" text-anchor="middle" class="m">shm</text>
+<text x="380" y="180" text-anchor="middle" class="m">i2c 读标定(启动时一次,缓存)</text>
+</svg>
+</div>
+
+<h2>3 · EEPROM 出厂标定解码 <span class="en">/ Factory calibration layout</span></h2>
+<p>1KB EEPROM,头 <code>"UNION"</code>,数值全为小端 IEEE754 double。<b>免现场标定</b>,OpenCV <code>stereoRectify</code> 直接可用。</p>
+<table>
+<tr><th>偏移</th><th>字段</th><th>实测值</th></tr>
+<tr><td><code>0x00</code></td><td>魔数 "UNION" + 版本字节</td><td>—</td></tr>
+<tr><td><code>0x18</code></td><td>cam1(↔<b>0x30</b> 眼):fx fy cx cy + k1 k2 p1 p2(+4 零)</td><td>666.49 / 666.68 / 526.79 / 637.45</td></tr>
+<tr><td><code>0x78</code></td><td>cam1 重投影误差</td><td>0.226 px</td></tr>
+<tr><td><code>0x81</code></td><td>cam2(↔<b>0x32</b> 眼)同布局</td><td>658.36 / 658.59 / 520.23 / 648.67</td></tr>
+<tr><td><code>0xE1</code></td><td>cam2 重投影误差</td><td>0.233 px</td></tr>
+<tr><td><code>0xEA</code></td><td>R(9 double,≈单位阵)+ T(3 double)+ |T| 自校验</td><td>T=[-0.0697, 0.0005, 0.0007] → <b>基线 69.69mm</b></td></tr>
+</table>
+<p class="small">cam1↔0x30 的对应关系用 SGBM 有效率实证:正确对应 41.5% vs 交换 23.1%。标定按 1088×1280 全分辨率,降尺度使用时 K 同比缩放。</p>
+
+<h2>4 · 排线故障实战 <span class="en">/ Flaky-cable war story</span></h2>
+<div class="card">
+<b>症状</b>:左眼 ISP 后噪声 9–11(右眼 0.9)、掉帧 40%、AE 震荡;RAW 噪声却正常。<br>
+<b>排除</b>:settle 扫描无效、Bayer 相位一致、单路独占仍脏 → 非软件/双路冲突。<br>
+<b>铁证</b>:<code>/sys/class/vps/mipi_host0/status/icnt</code> 的 <b><code>pkt_fatal</code> 持续累积(~7/s)</b>,对侧 host 恒 0 → MIPI 物理层误码。<br>
+<b>处置</b>:对调板端 CSI 排线 → 全好(误码归零、满帧率)→ 归位后仍好。<span class="ok">根因 = 排线接触不良,插拔即愈。</span><br>
+<b>教训</b>:图像"脏"先看 <code>pkt_fatal</code> 计数,一秒定性物理层;别在 ISP/tuning 里瞎找。
+</div>
+
+<h2>5 · 60fps 解锁 <span class="en">/ Unlocking 60fps</span></h2>
+<p><b>真相</b>:RDK 旧驱动表把 sensor 配成<b>外触发模式</b>(vts=<code>0x3FFF</code> 拉满),帧率完全由 X5 的 LPWM 触发脉冲决定(33333µs=30fps)。提高 LPWM 到 60Hz 无效——触发模式单帧序列 &gt;16.6ms,每两个触发掉一个。</p>
+<p><b>解法</b>(与上游 <a href="https://github.com/D-Robotics/x5-libcam-sensor">x5-libcam-sensor</a> 60fps master 表 diff 得出,PLL/MIPI 线速不变,<b>流中热打、无需重编驱动</b>):</p>
+<pre># stream off → 时序窗口 → vts=1400 → 关触发 → stream on   (i2ctransfer w3@&lt;addr&gt;)
+0x0100=0x00
+0x3201=0x02  0x3203=0x02  0x3205=0x55  0x3207=0x15  0x3213=0x0c
+0x320e=0x05  0x320f=0x78          # vts 0x0578 = 1400
+0x3222=0x00                       # ← 钥匙:关外触发模式,自由跑
+0x0100=0x01</pre>
+<p>已固化在 <code>stereo_cam.py::bump_sensors_60()</code>:spawn 采集 daemon 6s 后自动对两眼热打(chip-id 探测 bus4/6,排线怎么插都行)。实测双眼 60.0fps 稳定、误码零增长。副作用:两眼失去 LPWM 硬同步,自由跑相位差每次开机随机(实测 0–9ms,固定相位,配对逻辑 60ms 容限内无碍)。</p>
+<table>
+<tr><th>阶段</th><th>sensor</th><th>GUI 彩色</th><th>GUI 深度</th><th>说明</th></tr>
+<tr><td>IMX219(旧)</td><td>30fps</td><td>~30fps</td><td>—</td><td>单目</td></tr>
+<tr><td>双目初通</td><td>30fps(触发)</td><td>9fps</td><td>3fps(SGBM CPU)</td><td>load 正常时</td></tr>
+<tr><td><b>60fps 解锁后</b></td><td><b>60fps</b></td><td>7–9fps</td><td>2.6–3fps</td><td>发布端受 8 核满载(nav2 全栈)压制;shm 源 60fps 可直读</td></tr>
+<tr><td>BPU StereoNet(目标)</td><td>60fps</td><td>—</td><td><b>15–25fps(官方标称)</b></td><td>深度搬去 10TOPS BPU,CPU 释放 ~1.2 核</td></tr>
+</table>
+<p class="small">深度比彩色慢的本质:彩色是"搬运"(读+缩+转+JPEG ≈50ms),深度是"计算"(SGBM 半全局匹配 ≈260ms@432×512×64 视差)——差两个数量级,是算法成本不是管线 bug。</p>
+
+<h2>6 · NPU(BPU)深度加速 <span class="en">/ Official BPU StereoNet stack</span></h2>
+<p>RDK 官方对这款相机的深度方案<b>就是跑 10TOPS BPU</b>:</p>
+<pre>mipi_cam 双目模式(认 SC132GS,出 /image_combine_raw 左右拼合图)
+  → hobot_stereonet(BPU 神经网络 DStereoV2.x,int8/int16 × 多档分辨率,标称 15-25fps)
+  → hobot_codec(硬件 JPEG)→ websocket 预览</pre>
+<p>适配进展(2026-07-18):</p>
+<ul>
+<li class="ok">✔ 升级 <code>tros-humble-mipi-cam</code> 2.3.3→2.5.2(新增 SC132GS 双目专属 launch,含竖装 r90 变体)——单包零连带</li>
+<li class="ok">✔ 安装 <code>tros-humble-hobot-stereonet</code> 2.5.5(BPU 模型)——单包零连带</li>
+<li class="ok">✔ 升级 <code>hobot-camera</code> 3.0.1→3.1.1(sensor 库带 60fps master/slave 表)——单包零连带,旧库备份 <code>/root/sensor.bak.3.0.1</code></li>
+<li class="warn">▶ mipi_cam 双目驱动 init 卡在 GDC(旋转/矫正)环节:<code>create_and_run_vflow ret -1</code>,launch 里 <code>mipi_gdc_bin_file</code> 竟默认指向 <code>./sc230ai_gdc.bin</code>(异型号+相对路径);正在试 <code>mipi_gdc_enable:=False</code> 绕过(StereoNet 自带 rectify,GDC 非必需)</li>
+<li>配置目录已有本相机标定样例:<code>SC132gs_dual_calibration.yaml</code>、<code>sc132gs_calibration_90.yaml</code>(Kalibr 格式,基线 69/70mm 与 EEPROM 一致)</li>
+</ul>
+<p class="small">兜底:CPU SGBM 链路始终可用;BPU 通了之后深度话题契约不变(<code>/camera/depth/color_jpeg</code>),GUI 仍零改动。</p>
+
+<h2>7 · 文件清单与运维 <span class="en">/ Files &amp; ops</span></h2>
+<table>
+<tr><th>文件(仓库 board/ 镜像)</th><th>作用</th></tr>
+<tr><td><code>home/sunrise/nav_config/stereo_capture.c</code></td><td>HBN 双路采集守护;<code>-s 4 -s 5</code> 两眼,<code>-f N</code> 覆写 LPWM,<code>STEREO_TAP=vin</code> 抓 RAW 调试</td></tr>
+<tr><td><code>home/sunrise/nav_config/build_stereo_capture.sh</code></td><td>重刷机重建:生成左眼配置(addr 0x32)+ 注册 vp_sensors + 编译,幂等</td></tr>
+<tr><td><code>home/sunrise/nav_config/stereo_cam.py</code></td><td>ROS2 发布节点:EEPROM 标定→rectify/SGBM 深度 + 彩色;60fps 热打;daemon watchdog</td></tr>
+<tr><td><code>home/sunrise/nav_config/camera_autodetect.sh</code></td><td>开机探测插了什么相机(EEPROM "UNION" / USB Astra)</td></tr>
+<tr><td><code>etc/systemd/system/camera-preview.service</code></td><td>自启服务,取代 astra-cam.service</td></tr>
+</table>
+<pre># 常用命令(板上)
+systemctl status camera-preview          # 服务状态
+grep pkt_fatal /sys/class/vps/mipi_host*/status/icnt   # MIPI 物理层体检
+i2ctransfer -y 6 w2@0x50 0x00 0x00 r5    # 读 EEPROM 魔数(应 0x55 4e 49 4f 4e)
+bash /home/sunrise/nav_config/build_stereo_capture.sh  # 重刷机后重建</pre>
+
+<p class="small">相关文档:<code>.memory/rdk-x5-stereo-camera.md</code>(完整技术细节与教训)· 上游:<a href="https://github.com/D-Robotics/x5-libcam-sensor">x5-libcam-sensor</a> · <a href="https://github.com/D-Robotics/hobot_stereonet">hobot_stereonet</a> · <a href="https://www.waveshare.com/rdk-stereo-camera-module-gs130w.htm">微雪产品页</a></p>

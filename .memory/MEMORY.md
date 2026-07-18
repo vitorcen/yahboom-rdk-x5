@@ -7,5 +7,7 @@
 - [激光急刹 safety_stop](rdk-x5-safety-stop.md) — rclcpp 净空比例限速(固定阈值高速必撞);A键/GUI开关;蜂鸣约定;Y键全停
 - [Episode 录制系统](rdk-x5-episode-recorder.md) — 手柄/GUI 一键 rosbag2 录制;toggle/stop 分离、QoS override、.partial 等评审教训;episode_lab 分析
 - [遛狗模式](rdk-x5-dog-walk.md) — 纯反应式雷达漫游/闻/后退/转身;mux P1 停动作不停功能;无急刹门禁;codex 评审;活泼化调参;7.3V 欠压未实测
+- [双目立体相机](rdk-x5-stereo-camera.md) — 微雪 GS130WI(双 SC132GS+IMU@0x68 未接入)全链:EEPROM 标定解码(69.7mm)、HBN 双采、sensor 60fps 解锁(0x3222=0 热打)、**BPU stereonet 深度已上线**(自研 rectify combine 喂官方模型+hobot_codec 桥,GUI depth 5.4fps);三大坑=rclpy 大数组赋值/反序列化慢路径(array.array 直通+C++ codec 桥)、hobot-camera 升级 ABI 断裂(已回滚)、排线 pkt_fatal(插拔即愈)
 - [Astra 深度相机](rdk-x5-astra-depth.md) — USB Orbbec Astra Pro 深度进 GUI 左窗,板上实测 ~9fps;裸 OpenNI2 直读(弃坏掉的 astra_camera 驱动);USB2 深度/彩色不可兼得(彩色默认关);独立供电 hub
+- [CI1302 语音模块](rdk-x5-ci1302-voice.md) — 无宽泛音频IO/mp3不可播;USB现只供电未枚举;i2c-5 0x0d是罗盘;全模态走USB全向麦(设计文档已出)
 - [提交纪律](feedback-atomic-commits.md) — 迭代不提交,功能稳定后原子提交;碎提交软回退合并

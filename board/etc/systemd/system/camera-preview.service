@@ -1,0 +1,21 @@
+[Unit]
+Description=Camera preview auto-detect (GS130WI CSI stereo | USB Astra) -> /image_jpeg + /camera/depth/color_jpeg
+# Supersedes astra-cam.service: which camera to run is chosen at boot by what is
+# actually plugged in (camera_autodetect.sh). CSI stereo needs cam-service (ISP /dev/isc).
+After=network.target cam-service.service
+Wants=cam-service.service
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/root ROS_LOG_DIR=/tmp/roslog ROS_DOMAIN_ID=99
+ExecStartPre=/bin/mkdir -p /tmp/roslog
+# Wait for the ISP middleware so the CSI path can open (harmless for the Astra path).
+ExecStartPre=/bin/bash -c "timeout 60 bash -c 'until systemctl is-active --quiet cam-service && test -e /dev/isc; do sleep 2; done' || true"
+ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; exec bash /home/sunrise/nav_config/camera_autodetect.sh"
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
