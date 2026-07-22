@@ -12,10 +12,10 @@ metadata:
 > ⚠️ 凭据（SSH/VNC/AP/家用 WiFi/本机 sudo 密码）**一律不写进本仓库**（`.memory/` 会随 git 提交）。需要时向用户索取或从本机安全存储读取。下面只记结构，不记明文。
 
 **当前接入（会变，验证前先 ping / 查 arp `18:ce:df:79:2e:8b`）：**
-- 板子已切 **WiFi 客户端模式**连家里 5G 路由器，路由器绑定静态 IP **`192.168.3.187`**。`ssh root@192.168.3.187`（口令见上）。
+- 2026-07-22 板子已切 **WiFi 客户端模式**连接 `RobotDemo`，DHCP 地址 **`192.168.3.11`**。`ssh root@192.168.3.11`（口令见上）；旧的 `Yahboom2` NetworkManager profile 已删除。
 - AP 热点模式地址是 `192.168.8.88`（SSID `RDK_X5_Robot`），跑 `wifi_ap.sh` 切回时才用。
-- VNC：`192.168.3.187:5900`（x11vnc 出厂自带，已配密码）。
-- 本机(david) 部分操作需 sudo。家里路由器 5G SSID `YOUR_WIFI_SSID_5G`、2.4G `YOUR_WIFI_SSID_2G`（同一路由 192.168.3.x）。
+- VNC：当前网络下使用 `192.168.3.11:5900`（x11vnc 出厂自带，已配密码）。
+- 本机(david) 部分操作需 sudo。家里路由器 5G SSID `YOUR_WIFI_SSID_5G`、2.4G `YOUR_WIFI_SSID_2G`（同一路由 192.168.13.x）。
 
 **板端文件镜像**：仓库 `board/` 按板子真实路径 1:1 镜像（`home/sunrise/scripts/` 板端脚本 + `etc/systemd/system/` 自启服务）；重刷机恢复=`scripts/deploy_board.sh`（rsync + enable）。
 

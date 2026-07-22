@@ -2,8 +2,8 @@
 
 use std::process::Command;
 
-const BOARD: &str = "root@192.168.3.187";
-const BOARD_IP: &str = "192.168.3.187";
+const BOARD: &str = "root@192.168.13.187";
+const BOARD_IP: &str = "192.168.13.187";
 
 // Whitelisted log sources -> the exact remote command we run for each.
 // Never interpolate user input into the shell line.
@@ -452,7 +452,7 @@ pg '[w]ebsocket'
 echo; echo "== 程序 / 配置 =="
 echo "程序:   /opt/tros/humble/lib/websocket/websocket"
 echo "配置:   /opt/tros/humble/lib/websocket/config/（前端页面资源同目录）"
-echo; echo "浏览器入口: http://192.168.3.187:8000/TogetheROS/"
+echo; echo "浏览器入口: http://192.168.13.187:8000/TogetheROS/"
 "#,
         "nav2" => r#"
 echo "== 服务 =="

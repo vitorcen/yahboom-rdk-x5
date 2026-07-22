@@ -2,3 +2,4 @@ source/
 episodes/
 __pycache__/
 temp/
+.DS_Store

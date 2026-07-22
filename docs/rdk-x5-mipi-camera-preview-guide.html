@@ -288,7 +288,7 @@
       <div class="card">
         <div class="label">浏览器入口</div>
         <div class="value">:8000/TogetheROS/</div>
-        <div class="detail"><a href="http://192.168.3.187:8000/TogetheROS/">http://192.168.3.187:8000/TogetheROS/</a></div>
+        <div class="detail"><a href="http://192.168.13.187:8000/TogetheROS/">http://192.168.13.187:8000/TogetheROS/</a></div>
       </div>
       <div class="card">
         <div class="label">相机硬件</div>
@@ -346,7 +346,7 @@
   <section id="manual">
     <h2>手工启动</h2>
     <p>项目提供统一模式切换脚本，并同步到板子的 <code>/home/sunrise/scripts/</code>。</p>
-    <pre class="command">ssh root@192.168.3.187
+    <pre class="command">ssh root@192.168.13.187
 
 # 切到 TogetheROS 浏览器预览
 sudo /home/sunrise/scripts/camera_mode.sh tros
@@ -369,7 +369,7 @@ sudo /home/sunrise/scripts/camera_mode.sh status</pre>
       <li>通过 <code>ros2 topic hz /image_raw</code> 验证是否真实出图。</li>
     </ol>
     <div class="callout">
-      <strong>当前预览地址：</strong><a href="http://192.168.3.187:8000/TogetheROS/">http://192.168.3.187:8000/TogetheROS/</a>
+      <strong>当前预览地址：</strong><a href="http://192.168.13.187:8000/TogetheROS/">http://192.168.13.187:8000/TogetheROS/</a>
     </div>
 
     <h3>推荐：混合模式</h3>

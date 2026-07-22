@@ -2,11 +2,11 @@
 # One-shot restore of all board-side files after a fresh reflash.
 # board/ mirrors the board filesystem 1:1, so restore == rsync + enable units.
 #
-# Usage: ./deploy_board.sh [board-ip]      (default 192.168.3.187)
+# Usage: ./deploy_board.sh [board-ip]      (default 192.168.13.187)
 # Prereq: ssh root@<ip> works (password `yahboom`, or run ssh-copy-id first).
 set -euo pipefail
 
-IP=${1:-192.168.3.187}
+IP=${1:-192.168.13.187}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 echo "== 1/3 sync board/ -> root@$IP:/ =="

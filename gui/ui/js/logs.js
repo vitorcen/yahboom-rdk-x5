@@ -74,7 +74,7 @@ logview.addEventListener('click', e => {
   if (nd) { $('logfilter').value = nd; renderLogs(); }
 });
 
-// Where each log physically lives on the board (192.168.3.187).
+// Where each log physically lives on the board (192.168.13.187).
 const LOGPATH = {
   rosout: '话题 /rosout (rosbridge ws:9090) · 节点落盘: 板端 /tmp/roslog/<launch>/launch.log (ROS_LOG_DIR, 重启清空)',
   dmesg:  '内核环形缓冲 (ssh dmesg) · 落盘: 板端 /var/log/kern.log',

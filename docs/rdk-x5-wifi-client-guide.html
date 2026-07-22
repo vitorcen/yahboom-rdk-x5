@@ -334,7 +334,7 @@
     <div class="status-line">
       <span class="badge ok">最终状态：Client 正常</span>
       <span class="badge info">SSID：YOUR_WIFI_SSID_5G</span>
-      <span class="badge">板端 IP：192.168.3.187</span>
+      <span class="badge">板端 IP：192.168.13.187</span>
       <span class="badge">验证日期：2026-07-10</span>
     </div>
   </header>
@@ -366,12 +366,12 @@
       </div>
       <div class="card">
         <div class="label">板端地址</div>
-        <div class="value">192.168.3.187</div>
+        <div class="value">192.168.13.187</div>
         <div class="detail">由路由器 DHCP 分配</div>
       </div>
       <div class="card">
         <div class="label">默认网关</div>
-        <div class="value">192.168.3.1</div>
+        <div class="value">192.168.13.1</div>
         <div class="detail">默认路由经 wlan0</div>
       </div>
       <div class="card">
@@ -387,7 +387,7 @@
     </div>
 
     <div class="callout good">
-      <strong>当前 SSH 入口：</strong>电脑也连接到同一路由器后，使用 <code>ssh root@192.168.3.187</code>。如果路由器以后重新分配地址，应通过路由器后台按无线 MAC <code>18:ce:df:79:2e:8b</code> 查找新 IP。
+      <strong>当前 SSH 入口：</strong>电脑也连接到同一路由器后，使用 <code>ssh root@192.168.13.187</code>。如果路由器以后重新分配地址，应通过路由器后台按无线 MAC <code>18:ce:df:79:2e:8b</code> 查找新 IP。
     </div>
   </section>
 
@@ -497,7 +497,7 @@ systemctl is-active wpa_supplicant NetworkManager
 nmcli device status</pre>
 
     <h3>验证网关、公网和 DNS</h3>
-    <pre class="command">ping -c 2 192.168.3.1
+    <pre class="command">ping -c 2 192.168.13.1
 ping -c 2 223.5.5.5
 getent ahostsv4 www.baidu.com</pre>
 
@@ -508,8 +508,8 @@ getent ahostsv4 www.baidu.com</pre>
       <tbody>
         <tr><td><code>iwgetid wlan0 -r</code></td><td><code>YOUR_WIFI_SSID_5G</code></td></tr>
         <tr><td><code>iw dev wlan0 info</code></td><td><code>type managed</code></td></tr>
-        <tr><td>IPv4</td><td>路由器网段地址，本次为 <code>192.168.3.187/24</code></td></tr>
-        <tr><td>默认路由</td><td><code>default via 192.168.3.1 dev wlan0</code></td></tr>
+        <tr><td>IPv4</td><td>路由器网段地址，本次为 <code>192.168.13.187/24</code></td></tr>
+        <tr><td>默认路由</td><td><code>default via 192.168.13.1 dev wlan0</code></td></tr>
         <tr><td><code>wpa_supplicant</code></td><td class="state-ok">active</td></tr>
         <tr><td><code>RDK_X5_Robot</code></td><td class="state-off">不再广播</td></tr>
       </tbody>
@@ -563,7 +563,7 @@ getent ahostsv4 www.baidu.com</pre>
     <ol class="timeline">
       <li><strong>确认目标路由器正常</strong><span>电脑可见并可连接 <code>YOUR_WIFI_SSID_5G</code>，信道 44。</span></li>
       <li><strong>发现 supplicant 被 mask</strong><span>NetworkManager 无法创建 Wi-Fi 扫描和认证后端。</span></li>
-      <li><strong>首次连接成功</strong><span>板子获得 <code>192.168.3.187</code>，但厂商 AP 自启动随后又抢回 wlan0。</span></li>
+      <li><strong>首次连接成功</strong><span>板子获得 <code>192.168.13.187</code>，但厂商 AP 自启动随后又抢回 wlan0。</span></li>
       <li><strong>定位 XFCE 竞争条件</strong><span><code>Open_AP.desktop</code> 延迟运行 <code>open_AP.sh</code>，重新 mask supplicant。</span></li>
       <li><strong>补齐持久化与回滚</strong><span>提前禁用 AP 自启动、增加 nmcli 超时和独立 90 秒回滚。</span></li>
       <li><strong>完成重启验证</strong><span>重启后自动连接 5 GHz 路由器，SSH、公网和 DNS 均正常。</span></li>
