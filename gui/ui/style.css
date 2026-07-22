@@ -80,9 +80,11 @@ main { flex:1; display:flex; flex-direction:column; min-height:0; }
 #wrap { position:relative; flex:1; min-width:0; min-height:0; }
 canvas#cv { background:#0f131f; border:1px solid #262b3d; border-radius:8px;
             width:100%; height:100%; display:block; cursor:crosshair; }
-#cambox, #depthbox { position:absolute;
+#cambox, #depthbox, #imubox { position:absolute;
           border:1px solid #31344b; border-radius:8px; background:#000; display:none;
           overflow:hidden; cursor:grab; user-select:none; }
+#imubox { bottom:10px; left:10px; width:340px; height:200px; background:#0f131f; }
+#imucv { width:100%; height:100%; display:block; pointer-events:none; }
 /* 300x352 matches the 544x640 portrait stereo color feed (like #depthbox);
  * the old 420x252 landscape box + cover cropped away the fps overlay */
 #cambox { top:10px; right:10px; width:300px; height:352px; }
@@ -94,9 +96,9 @@ canvas#cv { background:#0f131f; border:1px solid #262b3d; border-radius:8px;
 #camov { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 #depthlegend { position:absolute; left:6px; bottom:5px; font-size:11px; color:#e8edf7;
            background:rgba(0,0,0,.45); border-radius:4px; padding:1px 6px; pointer-events:none; }
-#camgrip, #depthgrip { position:absolute; right:0; bottom:0; width:26px; height:26px;
+#camgrip, #depthgrip, #imugrip { position:absolute; right:0; bottom:0; width:26px; height:26px;
            cursor:nwse-resize; }
-#camgrip::after, #depthgrip::after { content:''; position:absolute; right:4px; bottom:4px;
+#camgrip::after, #depthgrip::after, #imugrip::after { content:''; position:absolute; right:4px; bottom:4px;
            width:12px; height:12px;
            border-right:3px solid #7ea6e0; border-bottom:3px solid #7ea6e0;
            border-radius:0 0 4px 0; }

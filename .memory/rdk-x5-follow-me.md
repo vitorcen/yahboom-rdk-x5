@@ -26,4 +26,17 @@ Follow-me 融合跟随(v3 2026-07-12,实测可用,详见 docs/rdk-x5-follow-me-f
   hand_lmk 尺寸过滤直接丢弃("Move hand far from sensor!"),手势要在 1.5-2m 外做。
 - 待做:故障注入测试、物理停车距离回填 FRONT_STOP。
 
+**双目相机适配(2026-07-20,链路板上验证,跟随行为待实测)**:
+- follow_start.sh 用 EEPROM "UNION" 探测(同 camera_autodetect)选相机:GS130WI →
+  感知链吃 `/image_color_nv12`(544×640 右眼半分辨率,~20fps 源,BPU 全链跑起后 mono2d
+  实测 6-8fps);否则回落 `/image_raw`。几何经环境变量注入 follow_me.py
+  (FOLLOW_IMG_W/FX/CX/SHOULDER=544/333.25/263.4/150,=出厂标定 666.5/526.8 的一半;
+  px_to_bearing 改 atan2((cx-CX)/FX),旧 IMX219 默认值兜底)。
+- **深度测距融合**:stereo_combine(C++)订 mono2d body roi × stereonet 深度图,
+  用 maps_[0](rectified→source 映射表)一遍平扫找"落在 roi 内的深度像素",
+  30 分位(前景)发 `/follow/cam_ranges`(`[id,cx,range_m]` 三元组,小消息 rclpy 可安全订)。
+  follow_me 按 **cx 几何匹配**(不信 track id——mono2d 与手势链各自跑 MOT,id 不同源!),
+  深度距离优先于肩宽估距;无腿时用 KV_LEG 增益做真实距离闭环;ref_dist 也可由深度初始化。
+- 注意:follow 链全开时板 load 可到 20+,mono2d 从 14fps 掉到 6-8fps,仍够用。
+
 相关:[[rdk-x5-robot-status]] [[rdk-x5-nav2-plan]] [[feedback-atomic-commits]]

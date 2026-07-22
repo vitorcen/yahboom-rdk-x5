@@ -242,6 +242,7 @@ class StereoCam(Node):
                                     stderr=subprocess.DEVNULL)
         self.get_logger().info(f'stereo_capture spawned pid={self.cap.pid}')
         threading.Timer(6.0, bump_sensors_60, args=(self.get_logger(),)).start()
+        self.imu = self.spawn_imu()
 
         self.out_size = (OUT_W, int(H * OUT_W / W))
         self.running = True
@@ -289,6 +290,14 @@ class StereoCam(Node):
         p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=dict(os.environ))
         self.get_logger().info(f'stereonet spawned pid={p.pid}')
+        return p
+
+    def spawn_imu(self):
+        # module's on-board ICM-42688-P -> /camera/imu (bus probed inside)
+        p = subprocess.Popen(
+            ['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     'cam_imu_pub.py')], env=dict(os.environ))
+        self.get_logger().info(f'cam_imu spawned pid={p.pid}')
         return p
 
     def spawn_combine(self):
@@ -419,6 +428,9 @@ class StereoCam(Node):
             self.cap = subprocess.Popen(CAPTURE, stdout=subprocess.DEVNULL,
                                         stderr=subprocess.DEVNULL)
             threading.Timer(6.0, bump_sensors_60, args=(self.get_logger(),)).start()
+        if self.imu.poll() is not None:
+            self.get_logger().warn('cam_imu died, respawning')
+            self.imu = self.spawn_imu()
         if BACKEND == 'stereonet':
             if self.snet.poll() is not None:
                 self.get_logger().warn('stereonet died, respawning')
@@ -463,7 +475,8 @@ class StereoCam(Node):
     def destroy_node(self):
         self.running = False
         for p in (getattr(self, 'combine', None), getattr(self, 'codec_color', None),
-                  getattr(self, 'codec', None), getattr(self, 'snet', None), self.cap):
+                  getattr(self, 'codec', None), getattr(self, 'snet', None),
+                  getattr(self, 'imu', None), self.cap):
             try:
                 p.terminate()
                 p.wait(timeout=5)

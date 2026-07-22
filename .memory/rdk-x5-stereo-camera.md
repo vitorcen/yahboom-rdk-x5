@@ -53,8 +53,11 @@ metadata:
 - **开机自动探测**`board/home/sunrise/nav_config/camera_autodetect.sh`:探 **i2c-6 0x50 EEPROM 前5字节
   ="UNION"**(=GS130WI,**MCLK 无关最可靠**;sensor chip-id 探测不行——libsrcampy 用过 0x30 后该地址
   i2c 掉线 NAK)→ 跑 stereo_cam.py;否则探 USB Astra `2bc5:0403`→ astra_preview.py;都没有→ sleep。
-- `board/etc/systemd/system/camera-preview.service`:跑 wrapper,**取代 astra-cam.service**(已 stop+disable);
-  依赖 cam-service+/dev/isc。已 enable 开机自启,板上实测 active、9fps。
+- `board/etc/systemd/system/camera-preview.service`:跑 wrapper,**取代并已删除 astra-cam.service**
+  (旧 astra-cam 在 USB 空插时死循环重启 225 次、还与本服务抢相机角色——这是"双目开机不自启"的根因:
+  两个相机服务都 enabled 打架)。`Restart=always`(autodetect 无相机分支 `sleep infinity`,正常不退,
+  故任何 clean-exit 都属异常应重启)。依赖 cam-service+/dev/isc。板上实测 active,`/image_jpeg`+
+  `/camera/depth/color_jpeg` 均出流(`ros2 topic hz` 这套零拷贝中间件静默收不到,判活一律用 `ros2 topic bw`)。
 - GUI 前端**无需改**:契约与 Astra 相同(`/image_jpeg`→右窗#cambox)。注:现喂的是**右眼 0x30**,
   而 GUI 文案写"双目模式=左目"——阶段2 上 HBN 后改喂左眼对齐。
 
@@ -160,6 +163,19 @@ metadata:
 - 弯路记录:CCM/HSV/钳位空间扣除/灰世界增益全试过——乘性增益修不了加性污染;纯净图可改发 Y 灰度。
 - 教训:hbn_isp_api(libvpf)的 `hbn_isp_set_awb_attr` 需在出流后调用(启动即调返回 -65545/零增益);
   `pkill -f` 的模式若出现在远程 bash -c 命令串里照样自杀,杀进程用 pid 或确保串内无该字样。
+
+**IMU 接入(2026-07-20,板上实测)**:模组 ICM-42688-P(i2c-6 0x68,WHO_AM_I=0x47)
+六轴已桥接:`cam_imu_pub.py`(纯 stdlib /dev/i2c ioctl,免 smbus;PWR_MGMT0=0x0F 上电,
+默认 FSR ±16g/±2000dps,burst 读 0x1D..0x2A)发 `/camera/imu`(sensor_msgs/Imu,
+无姿态 orientation_cov[0]=-1),stereo_cam.py 第 6 个受监督子进程。50Hz 定时器负载下实测 ~36Hz。
+静止实测 |a|≈9.75(重力主要在 -Y=竖装)。底盘九轴对照:/imu/data_raw(10Hz)+/imu/mag
+(三轴磁)+madgwick /imu/data。GUI 仪表盘浮窗 imu.js 双列显示(姿态球/罗盘/双 IMU 条图)。
+**悬案已定位(2026-07-22)**:开机 camera-preview enabled 却本 boot 无任何 journal(未启动)、
+手动 start 正常——2026-07-20 首见,07-22 复现。根因=**被取代的 astra-cam.service 仍 enabled 在抢角色**
+(USB Astra 没插时它 `no devices found` 死循环重启 225 次;两个相机服务都 WantedBy multi-user.target
+打架,camera-preview 的 start job 被吞)。修复=**删除 astra-cam.service unit**(仓库+板子)+ camera-preview
+`Restart=on-failure`→`Restart=always` 兜底。删后板上手动验证 active、双 topic 出流;**重启一次全自动
+就绪待最终复验**。
 
 **Why:** 记录硬件换代事实(IMX219→双目 SC132GS)+ 两 CSI 已验证地址/ID/出图,避免下次重新摸索;
 [[rdk-x5-robot-status]] 里"相机进展(IMX219 CSI0=i2c-6 0x10)"一节已过时,以本条为准。

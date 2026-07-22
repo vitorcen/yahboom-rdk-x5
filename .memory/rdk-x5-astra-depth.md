@@ -35,8 +35,9 @@ GS130W CSI 双目(那套 `docs/rdk-x5-stereo-depth-design.html` 已作废——C
 - `board/home/sunrise/nav_config/astra_preview.py`:**裸 OpenNI2(primesense,pip 装)直读深度 320×240**
   → JET 伪彩(红近蓝远)→ `/camera/depth/color_jpeg`(10Hz 定时器发)。**不用 astra_camera 驱动、
   无激光/LDP 折腾**(OpenNI 开流自动亮投射器)。彩色 `enable_color` 参数**默认关**(开了深度就塌)。
-- `astra-cam.service`:ExecStart 直接跑该 py(不再 `ros2 launch astra_camera`);开机自启已 enable;
-  依赖 `pip3 install primesense`。**停用了 crash-loop 的 mipi-cam**(CSI 相机已没了)。
+- 开机自启由 `camera-preview.service` + `camera_autodetect.sh` 负责(插 USB Astra 才跑该 py,
+  插双目则跑 `stereo_cam.py`)。依赖 `pip3 install primesense`。**独立的 `astra-cam.service` 已删**
+  ——它在 USB 空插时死循环重启且与 camera-preview 抢角色;autodetect 已覆盖 Astra 路径。见 [[rdk-x5-stereo-camera]]。
   (旧的 `astra_preview_launch.py` 已删。)
 - GUI:`floatbox.js` 抽 `makeFloatBox()` 公用;左窗 `#depthbox` 订 `/camera/depth/color_jpeg`+iDepth 灯+
   掉流看门狗;右窗 `#cambox` 仍订 `/image_jpeg`。改 JS 要 **reload Tauri** 生效。

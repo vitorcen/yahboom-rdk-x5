@@ -18,16 +18,21 @@ onTopic('/image_jpeg', m => {
 
 // Perception overlay: body/head/face/hand boxes + gesture labels from the
 // follow-me BPU chain, drawn over the (object-fit: cover) camera image.
-// Source frame is 960x544; silence >1s clears the overlay.
-const SRC_W = 960, SRC_H = 544;
+// Roi frame differs per camera: GS130WI stereo runs perception on the native
+// portrait 1088x1280 (/image_color_full) while the preview jpeg is 544x640
+// (same aspect); legacy mono was 960x544 for both. Portrait preview =>
+// stereo. Silence >1s clears the overlay.
+let ovTimer = null;
 const ROI_COLOR = { body:'#7ea6e0', head:'#8b93b5', face:'#7ee2a8', hand:'#e0a458' };
 const GESTURE = { 2:'👍', 3:'✌V', 4:'🤫嘘', 5:'✋Palm 停止', 11:'👌OK 锁定',
                   12:'👉', 13:'👈', 14:'🤟666' };
-let ovTimer = null;
 
 onTopic('/hobot_hand_gesture_detection', m => {
   const cv = $('camov');
   if (cambox.style.display === 'none') return;
+  const img = $('cam');
+  const portrait = img.naturalHeight > img.naturalWidth;
+  const SRC_W = portrait ? 1088 : 960, SRC_H = portrait ? 1280 : 544;
   cv.width = cambox.clientWidth; cv.height = cambox.clientHeight;
   const g = cv.getContext('2d');
   g.clearRect(0, 0, cv.width, cv.height);
@@ -40,6 +45,8 @@ onTopic('/hobot_hand_gesture_detection', m => {
                                       .map(a => Math.round(a.value))
                                       .filter(v => v);   // 0 = classifier idle
     for (const r of t.rois || []) {
+      // mono2d emits uint32-wrapped (negative) sizes near the frame edge
+      if (r.rect.width > 8000 || r.rect.height > 8000) continue;
       const c = ROI_COLOR[r.type] || '#c792ea';
       const x = ox + r.rect.x_offset * s, y = oy + r.rect.y_offset * s;
       const w = r.rect.width * s, h = r.rect.height * s;

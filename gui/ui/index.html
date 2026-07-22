@@ -103,6 +103,7 @@
       </div>
       <div id="cambox" title="全彩相机（双目模式=左目；单目模式=单相机）· 拖动移动 · 右下角拉伸"><img id="cam" alt="camera"><canvas id="camov"></canvas><div id="camgrip"></div></div>
       <div id="depthbox" title="双目深度伪彩（红近蓝远，仅双目模式）· 拖动移动 · 右下角拉伸"><img id="depth" alt="depth"><span id="depthlegend">🔴近 · 🔵远</span><div id="depthgrip"></div></div>
+      <div id="imubox" title="IMU 实时状态：姿态球=底盘九轴 madgwick 融合(/imu/data)，罗盘=磁力计原始航向(未倾角补偿)；右列=相机 GS130WI 板载 ICM-42688-P 六轴(/camera/imu)。灰=数据断流 · 拖动移动 · 右下角拉伸"><canvas id="imucv" width="680" height="400"></canvas><div id="imugrip"></div></div>
     </div>
   </div>
 </div>

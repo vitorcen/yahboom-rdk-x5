@@ -1,9 +1,8 @@
 [Unit]
 Description=Follow-me: BPU perception chain + follow node (OK lock / Palm stop)
-# Camera moved from mipi-cam (retired) to the USB Astra (astra-cam). NOTE:
-# follow-me's BPU chain still wants /image_raw and IMX219 geometry, so it needs
-# repointing to the Astra color before it works again — tracked separately.
-After=nav-bringup.service ms200-lidar.service
+# Camera source is probed by follow_start.sh: GS130WI stereo (EEPROM "UNION")
+# -> /image_color_nv12 from camera-preview.service, else legacy /image_raw.
+After=nav-bringup.service ms200-lidar.service camera-preview.service
 Wants=nav-bringup.service ms200-lidar.service
 # Never give up retrying: at boot the camera/BPU may not be ready yet and the
 # chain dies fast — the default 5-tries-in-10s burst limit then parked the
@@ -16,6 +15,13 @@ Type=simple
 Environment=HOME=/root
 Environment=ROS_LOG_DIR=/tmp/roslog
 ExecStartPre=/bin/mkdir -p /tmp/roslog
+# Self-clean: when the slow-dying BPU chain hits TimeoutStop's SIGKILL, the
+# start script's trap never runs and the model nodes survive as orphans; each
+# restart then stacks another set until the CPU starves (seen: 5x mono2d,
+# load 28, rosbridge unreachable). Names are comm (15-char truncated).
+ExecStartPre=-/usr/bin/pkill -x mono2d_body_det
+ExecStartPre=-/usr/bin/pkill -x hand_lmk_detect
+ExecStartPre=-/usr/bin/pkill -x hand_gesture_de
 ExecStart=/home/sunrise/follow/follow_start.sh
 Restart=always
 RestartSec=5

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- TEST-ONLY page for the IMU panel: imu.js with ros.js swapped for the
+     synthetic-data stub via import map. Open http://localhost:8777/test_imu.html -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>IMU panel test</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "http://localhost:8777/js/ros.js": "http://localhost:8777/js/ros_stub.js" } }
+</script>
+</head>
+<body>
+<div id="wrap" style="position:relative;width:760px;height:460px;margin:30px">
+  <div id="imubox" title="IMU test"><canvas id="imucv" width="680" height="400"></canvas><div id="imugrip"></div></div>
+</div>
+<script type="module">import './js/imu.js';</script>
+</body>
+</html>

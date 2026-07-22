@@ -18,6 +18,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -32,9 +34,11 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <ai_msgs/msg/perception_targets.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
 
 static constexpr int W = 1088, H = 1280;      // sensor native (portrait)
 static constexpr int MW = 640, MH = 352;      // stereonet model input per eye
@@ -219,13 +223,27 @@ public:
     StereoCombine() : Node("stereo_combine") {
         pub_combine_ = create_publisher<sensor_msgs::msg::Image>("/image_combine_raw", 2);
         pub_color_ = create_publisher<sensor_msgs::msg::Image>("/image_color_nv12", 2);
+        // native-res eye0 for the BPU perception chain: at the 544 preview
+        // scale a hand is ~40px and the gesture classifier mostly returns 0;
+        // at 1088x1280 it gets ~80px and works. Lazy: only when subscribed.
+        pub_full_ = create_publisher<sensor_msgs::msg::Image>("/image_color_full", 2);
         if (!load_maps(maps_)) {
             RCLCPP_FATAL(get_logger(), "cannot load %s", MAPS_BIN);
             throw std::runtime_error("maps");
         }
         combine_hz_ = env_int("COMBINE_HZ", 25);
         color_hz_ = env_int("COLOR_HZ", 0);    // 0 = event-driven, every new pair
+        perc_hz_ = env_int("PERC_HZ", 10);     // native-res feed for perception
         RCLCPP_INFO(get_logger(), "maps ok; combine %dHz color %dHz", combine_hz_, color_hz_);
+        // follow-me range assist (idle unless the perception chain is up)
+        pub_ranges_ = create_publisher<std_msgs::msg::Float32MultiArray>(
+            "/follow/cam_ranges", 5);
+        sub_targets_ = create_subscription<ai_msgs::msg::PerceptionTargets>(
+            "/hobot_mono2d_body_detection", 5,
+            [this](ai_msgs::msg::PerceptionTargets::SharedPtr m) { on_targets(m); });
+        sub_depth_ = create_subscription<sensor_msgs::msg::Image>(
+            "/StereoNetNode/stereonet_depth", rclcpp::SensorDataQoS(),
+            [this](sensor_msgs::msg::Image::SharedPtr m) { on_depth(m); });
         th_combine_ = std::thread([this] { loop_combine(); });
         th_color_ = std::thread([this] { loop_color(); });
     }
@@ -306,6 +324,14 @@ private:
         msg.encoding = "nv12";
         msg.step = OW;
         msg.data.resize((size_t)OW * OH * 3 / 2);
+        sensor_msgs::msg::Image full;
+        full.header.frame_id = "sc132gs_color";
+        full.height = H;
+        full.width = W;
+        full.encoding = "nv12";
+        full.step = W;
+        full.data.resize(FRAME_BYTES);
+        double last_full = 0.0;
 
         while (run_ && rclcpp::ok()) {
             if (!pr.has_new(last_ts)) {
@@ -316,6 +342,13 @@ private:
             double ts = pr.snap(e0.data(), nullptr, last_ts);
             if (ts > 0.0) {
                 last_ts = ts;
+                if (pub_full_->get_subscription_count() > 0 && perc_hz_ > 0
+                        && ts - last_full >= 1.0 / perc_hz_) {
+                    last_full = ts;
+                    memcpy(full.data.data(), e0.data(), FRAME_BYTES);
+                    full.header.stamp = now();
+                    pub_full_->publish(full);
+                }
                 cv::Mat y(H, W, CV_8UC1, e0.data());
                 cv::Mat uv(H / 2, W / 2, CV_8UC2, e0.data() + (size_t)W * H);
                 cv::Mat ys(OH, OW, CV_8UC1, msg.data.data());
@@ -331,19 +364,84 @@ private:
         }
     }
 
+    /* ---- follow-me range assist: body rois (mono2d on the native-res
+     * /image_color_full stream) x stereonet depth (rectified eye0 frame, mm).
+     * maps_[0].y1 (CV_16SC2) already gives every rectified pixel its source
+     * pixel, so "which depth pixels fall in this roi" is one flat sweep — no
+     * inverse rectification needed. Output = flat [id, cx, range_m] triplets
+     * (cx in native px), tiny enough for rclpy to subscribe safely. */
+    struct Body { int id; cv::Rect rect; };            // rect in native px
+
+    void on_targets(const ai_msgs::msg::PerceptionTargets::SharedPtr &m) {
+        std::vector<Body> v;
+        for (const auto &t : m->targets)
+            for (const auto &roi : t.rois)
+                if (roi.type == "body")
+                    v.push_back({(int)t.track_id,
+                                 {(int)roi.rect.x_offset, (int)roi.rect.y_offset,
+                                  (int)roi.rect.width, (int)roi.rect.height}});
+        std::lock_guard<std::mutex> lk(mu_bodies_);
+        bodies_ = std::move(v);
+        bodies_t_ = std::chrono::steady_clock::now();
+    }
+
+    void on_depth(const sensor_msgs::msg::Image::SharedPtr &m) {
+        std::vector<Body> bodies;
+        {
+            std::lock_guard<std::mutex> lk(mu_bodies_);
+            if (bodies_.empty() || std::chrono::steady_clock::now() - bodies_t_
+                    > std::chrono::milliseconds(600))
+                return;                                // perception idle/stale
+            bodies = bodies_;
+        }
+        if (m->encoding != "mono16" || (int)m->width != MW || (int)m->height != MH)
+            return;
+        const auto *dp = (const uint16_t *)m->data.data();
+        std::vector<std::vector<uint16_t>> hits(bodies.size());
+        for (int y = 0; y < MH; y++) {
+            const int16_t *mp = maps_[0].y1.ptr<int16_t>(y);
+            for (int x = 0; x < MW; x++) {
+                uint16_t d = dp[y * MW + x];
+                if (!d) continue;
+                cv::Point sp(mp[2 * x], mp[2 * x + 1]);
+                for (size_t i = 0; i < bodies.size(); i++)
+                    if (bodies[i].rect.contains(sp)) hits[i].push_back(d);
+            }
+        }
+        std_msgs::msg::Float32MultiArray out;
+        for (size_t i = 0; i < bodies.size(); i++) {
+            auto &h = hits[i];
+            if (h.size() < 200) continue;              // occluded / off-frame
+            // 30th percentile: the person is the foreground inside their box
+            auto nth = h.begin() + h.size() * 3 / 10;
+            std::nth_element(h.begin(), nth, h.end());
+            out.data.push_back((float)bodies[i].id);
+            out.data.push_back(bodies[i].rect.x + bodies[i].rect.width / 2.0f);
+            out.data.push_back(*nth / 1000.0f);
+        }
+        if (!out.data.empty()) pub_ranges_->publish(out);
+    }
+
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_combine_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_color_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_full_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_ranges_;
+    rclcpp::Subscription<ai_msgs::msg::PerceptionTargets>::SharedPtr sub_targets_;
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_depth_;
+    std::vector<Body> bodies_;
+    std::chrono::steady_clock::time_point bodies_t_{};
+    std::mutex mu_bodies_;
     EyeMaps maps_[2];
     std::thread th_combine_, th_color_;
     std::atomic<bool> run_{true};
     double last_stamp_ = 0.0;
-    int combine_hz_ = 25, color_hz_ = 12;
+    int combine_hz_ = 25, color_hz_ = 12, perc_hz_ = 10;
 };
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<StereoCombine>();
-    rclcpp::spin(node);                       // no subscriptions; keeps ctx alive
+    rclcpp::spin(node);                       // serves the range-assist subs
     rclcpp::shutdown();
     return 0;
 }

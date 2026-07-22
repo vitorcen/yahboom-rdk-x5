@@ -17,6 +17,7 @@ re-locks with a double beep). Buzzer async; RGB unused (I2C crash history).
 The mux adds an independent lidar clearance guard + reverse ban on top.
 """
 import math
+import os
 from collections import deque
 
 import rclpy
@@ -25,7 +26,7 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy, LaserScan
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32MultiArray
 from ai_msgs.msg import PerceptionTargets
 
 GESTURE_OK, GESTURE_PALM = 11, 5
@@ -34,9 +35,14 @@ OK_WINDOW, OK_HITS = 1.0, 4
 PALM_WINDOW, PALM_HITS = 0.7, 2
 REACQ_WINDOW = 10.0    # s after involuntary loss: sole person auto re-locks
 REACQ_HITS = 8
-IMG_W = 960.0
-HFOV = math.radians(62)        # horizontal FOV of the 960x544 stream
-SHOULDER = 360.0               # px*m: person range ~= SHOULDER / body_width_px
+# Camera geometry — injected by follow_start.sh for the detected camera.
+# Defaults = legacy IMX219 960x544 mipi stream (fx derived from its 62° HFOV).
+IMG_W = float(os.environ.get('FOLLOW_IMG_W', 960.0))
+CAM_FX = float(os.environ.get('FOLLOW_FX',
+                              IMG_W / 2 / math.tan(math.radians(62) / 2)))
+CAM_CX = float(os.environ.get('FOLLOW_CX', IMG_W / 2))
+# px*m: person range ~= SHOULDER / body_width_px (~0.45 m shoulders * fx)
+SHOULDER = float(os.environ.get('FOLLOW_SHOULDER', 360.0))
 
 CAM_FRESH = 0.4     # s, camera body observation validity
 LEG_FRESH = 1.2     # s, leg track validity (single-leg views flicker)
@@ -93,7 +99,7 @@ def gestures_of(target):
 
 def px_to_bearing(cx):
     """Image column -> signed bearing in the robot frame (left positive)."""
-    return -(cx / IMG_W - 0.5) * HFOV
+    return -math.atan2(cx - CAM_CX, CAM_FX)
 
 
 def wrap(a):
@@ -110,6 +116,11 @@ class FollowMe(Node):
         self.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection',
                                  self.on_perception, 10)
         self.create_subscription(Joy, '/joy', self.on_joy, 10)
+        # stereo depth ranges per body roi (stereo_combine, GS130WI only):
+        # flat [track_id, cx_px, range_m] triplets. Matched by cx, not id —
+        # mono2d and the gesture chain re-run MOT with their own ids.
+        self.create_subscription(Float32MultiArray, '/follow/cam_ranges',
+                                 self.on_ranges, 10)
         self.create_subscription(LaserScan, '/scan', self.on_scan,
                                  qos_profile_sensor_data)
         self.create_subscription(Odometry, '/odom', self.on_odom,
@@ -123,6 +134,8 @@ class FollowMe(Node):
         self.cam_bearing, self.cam_range = 0.0, 0.0
         self.cam_cx, self.cam_bw = 0.0, 0.0
         self.cam_rois = {}
+        self.cam_depth = False       # cam_range came from stereo depth
+        self.ranges, self.ranges_t = [], -1.0    # [(cx, range_m)]
         # lidar channel
         self.leg_t = -1.0
         self.leg_bearing, self.leg_range = 0.0, 0.0
@@ -182,6 +195,20 @@ class FollowMe(Node):
                   else [(True, .6), (False, .05)])
 
     # ---- camera channel ---------------------------------------------------
+    def on_ranges(self, msg):
+        d = list(msg.data)
+        self.ranges = [(d[i + 1], d[i + 2]) for i in range(0, len(d) - 2, 3)]
+        self.ranges_t = self.now()
+
+    def depth_range(self, cx, t):
+        """Stereo range of the body whose roi center matches cx, if fresh."""
+        if t - self.ranges_t > CAM_FRESH:
+            return None
+        best = min(self.ranges, key=lambda e: abs(e[0] - cx), default=None)
+        if best and abs(best[0] - cx) < 0.12 * IMG_W and 0.2 < best[1] < 8.0:
+            return best[1]
+        return None
+
     def on_joy(self, msg):
         if self.state != 'IDLE' and len(msg.buttons) > SELECT_BTN \
                 and msg.buttons[SELECT_BTN]:
@@ -253,7 +280,14 @@ class FollowMe(Node):
         self.cam_cx = body.x_offset + body.width / 2.0
         self.cam_bw = float(body.width)
         self.cam_bearing = px_to_bearing(self.cam_cx)
-        self.cam_range = min(max(SHOULDER / max(self.cam_bw, 1.0), 0.3), 3.0)
+        dr = self.depth_range(self.cam_cx, t)
+        self.cam_depth = dr is not None
+        # stereo depth beats the shoulder-width heuristic when available
+        self.cam_range = dr if dr is not None else \
+            min(max(SHOULDER / max(self.cam_bw, 1.0), 0.3), 3.0)
+        if dr is not None and self.ref_dist is None:
+            self.ref_dist = min(max(dr, REF_DIST_MIN), REF_DIST_MAX)
+            self.get_logger().info(f'跟随距离基准 {self.ref_dist:.2f}m (深度)')
 
     def scale_error(self):
         """log(ref/now): camera-only speed fallback when the leg track is out."""
@@ -450,6 +484,10 @@ class FollowMe(Node):
             else KW_FF * self.b_rate
         if leg and self.ref_dist is not None:
             e = self.leg_range - self.ref_dist
+            v = KV_LEG * e if e > DEAD_R else 0.0
+        elif cam and self.cam_depth and self.ref_dist is not None:
+            # stereo depth is metric like the lidar — same gain, same deadband
+            e = self.cam_range - self.ref_dist
             v = KV_LEG * e if e > DEAD_R else 0.0
         else:
             es = self.scale_error() if cam else None

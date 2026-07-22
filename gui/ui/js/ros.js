@@ -46,6 +46,9 @@ export function connect() {
     sub('/camera/depth/color_jpeg', 'sensor_msgs/CompressedImage', 100);  // Astra depth pseudo-color, ~10fps
     sub('/hobot_hand_gesture_detection', 'ai_msgs/msg/PerceptionTargets', 100);
     sub('/voltage', 'std_msgs/Float32', 5000);
+    sub('/imu/data', 'sensor_msgs/Imu', 100);        // chassis 9-axis, madgwick-fused
+    sub('/imu/mag', 'sensor_msgs/MagneticField', 200);
+    sub('/camera/imu', 'sensor_msgs/Imu', 100);      // GS130WI ICM-42688-P 6-axis
     sub('/safety_enabled', 'std_msgs/Bool');   // latched by safety_stop
     sub('/dog_active', 'std_msgs/Bool');        // latched by dog_walk
     sub('/recording', 'std_msgs/Bool');        // latched by episode_recorder

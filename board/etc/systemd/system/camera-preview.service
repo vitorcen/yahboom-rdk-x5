@@ -12,7 +12,9 @@ ExecStartPre=/bin/mkdir -p /tmp/roslog
 # Wait for the ISP middleware so the CSI path can open (harmless for the Astra path).
 ExecStartPre=/bin/bash -c "timeout 60 bash -c 'until systemctl is-active --quiet cam-service && test -e /dev/isc; do sleep 2; done' || true"
 ExecStart=/bin/bash -c "source /opt/tros/humble/setup.bash; exec bash /home/sunrise/nav_config/camera_autodetect.sh"
-Restart=on-failure
+# always (not on-failure): the autodetect no-camera branch execs `sleep infinity`
+# so a clean exit only happens on an anomalous early quit at boot — restart it too.
+Restart=always
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=15

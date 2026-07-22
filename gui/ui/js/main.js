@@ -6,6 +6,7 @@ import { connect } from './ros.js';
 import './viewer.js';
 import './camera.js';
 import './health.js';
+import './imu.js';
 import { keyStop } from './teleop.js';
 import { onLogsShown } from './logs.js';
 import { onSysShown } from './system.js';
